@@ -1,0 +1,125 @@
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: oklch(15% 0.02 240);
+    --foreground: oklch(98% 0.01 200);
+    --surface: oklch(18% 0.022 238);
+    --surface-raised: oklch(22% 0.024 236);
+    --muted: oklch(26% 0.03 240);
+    --muted-foreground: oklch(72% 0.025 200);
+    --border: oklch(98% 0.01 200 / 0.22);
+    --input: oklch(98% 0.01 200 / 0.14);
+    --ring: oklch(80% 0.12 70);
+
+    --card: oklch(18% 0.022 238);
+    --card-foreground: oklch(98% 0.01 200);
+    --popover: oklch(22% 0.024 236);
+    --popover-foreground: oklch(98% 0.01 200);
+
+    --primary: oklch(92% 0.03 200);
+    --primary-foreground: oklch(15% 0.02 240);
+
+    --secondary: oklch(22% 0.024 236);
+    --secondary-foreground: oklch(98% 0.01 200);
+
+    --accent: oklch(25% 0.04 240);
+    --accent-foreground: oklch(98% 0.01 200);
+
+    --destructive: oklch(60% 0.15 20);
+    --destructive-foreground: oklch(98% 0.01 200);
+
+    --compliance-emergent: oklch(60% 0.15 20);
+    --compliance-caution: oklch(80% 0.12 70);
+    --compliance-verified: oklch(70% 0.12 140);
+
+    --chart-1: oklch(70% 0.12 140);
+    --chart-2: oklch(80% 0.12 70);
+    --chart-3: oklch(60% 0.15 20);
+    --chart-4: oklch(55% 0.08 240);
+    --chart-5: oklch(85% 0.06 200);
+
+    --sidebar: oklch(18% 0.022 238);
+    --sidebar-foreground: oklch(98% 0.01 200);
+    --sidebar-primary: oklch(70% 0.12 140);
+    --sidebar-primary-foreground: oklch(15% 0.02 240);
+    --sidebar-accent: oklch(22% 0.024 236);
+    --sidebar-accent-foreground: oklch(98% 0.01 200);
+    --sidebar-border: oklch(98% 0.01 200 / 0.15);
+    --sidebar-ring: oklch(80% 0.12 70);
+
+    --radius: 2px;
+    --radius-sm: 2px;
+    --radius-md: 2px;
+    --radius-lg: 2px;
+    --radius-xl: 2px;
+    --radius-panel: 2px;
+    --border-hairline: 0.5px;
+
+    color-scheme: dark;
+  }
+
+  .theme {
+    --font-heading: var(--font-mono);
+    --font-sans: var(--font-mono);
+  }
+
+  html {
+    @apply h-full;
+  }
+
+  body {
+    @apply min-h-full antialiased bg-background text-foreground;
+    font-family: var(--font-mono), ui-monospace, monospace;
+    font-feature-settings: "ss01" on, "cv01" on;
+    letter-spacing: -0.01em;
+    position: relative;
+  }
+
+  body::after {
+    content: "";
+    position: fixed;
+    inset: 0;
+    z-index: 50;
+    pointer-events: none;
+    opacity: 0.03;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='256' height='256'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+    background-repeat: repeat;
+    mix-blend-mode: overlay;
+  }
+
+  * {
+    border-color: var(--border);
+  }
+}
+
+@layer components {
+  .nomos-panel {
+    border-radius: var(--radius-panel);
+    border: var(--border-hairline) solid var(--border);
+    background-color: var(--surface);
+  }
+
+  .nomos-panel--raised {
+    background-color: var(--surface-raised);
+  }
+
+  .nomos-bento-grid {
+    display: grid;
+    gap: 0.5rem;
+    grid-template-columns: repeat(12, minmax(0, 1fr));
+    grid-auto-rows: minmax(0, auto);
+  }
+
+  .nomos-cot-feed {
+    @apply nomos-panel;
+    font-family: var(--font-mono), ui-monospace, monospace;
+    font-size: 0.75rem;
+    line-height: 1.35;
+    padding: 0.5rem 0.625rem;
+  }
+}

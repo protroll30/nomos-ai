@@ -1,0 +1,24 @@
+[
+    {
+      "id": "compliance_001",
+      "citation": "Art. 13(1)",
+      "instrument": "EU AI Act",
+      "section_ref": "Annex IV(f)",
+      "text": "High-risk AI systems shall be designed and developed in such a way as to ensure that their operation is sufficiently transparent...",
+      "repo_path": "backend/app/schemas/deployment.py",
+      "expected_probability": 0.84,
+      "state": "verified",
+      "reasoning": "Detected missing transparency logs in deployment schema. Corrected by adding automated metadata headers."
+    },
+    {
+      "id": "compliance_002",
+      "citation": "Art. 14(4)",
+      "instrument": "EU AI Act",
+      "section_ref": "Annex IV(h)",
+      "text": "Human oversight shall aim at preventing or minimising the risks to health, safety or fundamental rights...",
+      "repo_path": "backend/app/routers/admin.py",
+      "expected_probability": 0.64,
+      "state": "emergent",
+      "reasoning": "Admin override lacks a 2-factor human authorization hook required for high-risk manual interventions."
+    }
+  ]

@@ -7,3 +7,9 @@ __pycache__/
 .ruff_cache/
 .env
 database/lancedb_data/
+
+dashboard/node_modules/
+dashboard/.next/
+dashboard/out/
+
+.cursor/rules/
