@@ -1,0 +1,10 @@
+unsloth
+lancedb
+pyarrow
+fastapi
+uvicorn[standard]
+pygithub
+semgrep
+sentence-transformers
+scipy
+mcp[cli]
