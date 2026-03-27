@@ -18,26 +18,47 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { buildPosteriorChartData, mockPosteriors } from "@/lib/golden-set";
+import {
+  type PosteriorSeries,
+  buildPosteriorChartData,
+} from "@/lib/golden-set";
 
-export function BayesianChartPanel() {
+export function BayesianChartPanel({
+  posteriors,
+}: {
+  posteriors: PosteriorSeries[];
+}) {
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
   const data = useMemo(
-    () => buildPosteriorChartData([...mockPosteriors]),
-    []
+    () => buildPosteriorChartData(posteriors),
+    [posteriors]
   );
+
+  const xDomain = useMemo((): [number, number] => {
+    if (posteriors.length === 0) return [0.35, 0.995];
+    let lo = 1;
+    let hi = 0;
+    posteriors.forEach((p) => {
+      lo = Math.min(lo, p.mu - 4 * p.sigma);
+      hi = Math.max(hi, p.mu + 4 * p.sigma);
+    });
+    return [
+      Math.max(0.2, Math.round(lo * 1000) / 1000),
+      Math.min(0.999, Math.round(hi * 1000) / 1000),
+    ];
+  }, [posteriors]);
 
   return (
     <Card className="flex h-full min-h-0 flex-col gap-0 rounded-panel border-hairline border-border bg-surface py-2 shadow-none ring-0">
       <CardHeader className="space-y-0 border-b border-border px-3 py-2 [.border-b]:pb-2">
         <CardTitle className="font-mono text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">
-          Posterior density (mock) · compliance mapping confidence
+          Posterior density · E[p] from golden_set.json
         </CardTitle>
       </CardHeader>
       <CardContent className="min-h-0 flex-1 px-2 pb-2 pt-1">
         <div className="h-[11rem] w-full min-w-[12rem]">
-          {mounted ? (
+          {mounted && posteriors.length > 0 ? (
             <ResponsiveContainer width="100%" height="100%">
               <LineChart
                 data={data}
@@ -50,7 +71,7 @@ export function BayesianChartPanel() {
                 <XAxis
                   dataKey="x"
                   type="number"
-                  domain={[0.42, 0.99]}
+                  domain={xDomain}
                   tick={{ fill: "oklch(72% 0.025 200)", fontSize: 9 }}
                   tickLine={false}
                   axisLine={{ stroke: "oklch(98% 0.01 200 / 0.18)" }}
@@ -80,7 +101,7 @@ export function BayesianChartPanel() {
                     fontFamily: "var(--font-mono), monospace",
                   }}
                 />
-                {mockPosteriors.map((p) => (
+                {posteriors.map((p) => (
                   <Line
                     key={p.id}
                     type="monotone"
@@ -95,7 +116,9 @@ export function BayesianChartPanel() {
               </LineChart>
             </ResponsiveContainer>
           ) : (
-            <div className="h-full w-full bg-[color:var(--surface-raised)]" />
+            <div className="flex h-full w-full items-center justify-center bg-[color:var(--surface-raised)] font-mono text-[11px] text-muted-foreground">
+              {posteriors.length === 0 ? "No expected_probability series" : ""}
+            </div>
           )}
         </div>
       </CardContent>

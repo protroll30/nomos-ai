@@ -8,3 +8,4 @@ semgrep
 sentence-transformers
 scipy
 mcp[cli]
+anthropic

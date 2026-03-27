@@ -1,0 +1,65 @@
+Source regime: Regulation (EU) 2024/1689 (Artificial Intelligence Act). Static excerpts for model anchoring; cite only real articles in outputs.
+
+Art. 9 — Risk management system
+1. A risk management system shall be established, implemented, documented and maintained in relation to high-risk AI systems.
+2. The risk management system shall be a continuous iterative process planned and run throughout the entire lifecycle of a high-risk AI system, requiring regular review and updating. It shall comprise the following steps:
+(a) identification and analysis of the known and the reasonably foreseeable risks that the high-risk AI system can pose to health, safety or fundamental rights when the high-risk AI system is used in accordance with its intended purpose;
+(b) estimation and evaluation of the risks that may emerge when the high-risk AI system is used in accordance with its intended purpose, and the possible reasonably foreseeable misuse;
+(c) evaluation of other risks possibly arising from the interaction with other AI systems;
+(d) adoption of appropriate and targeted risk management measures designed to address the identified risks.
+
+Art. 10 — Data and data governance
+1. High-risk AI systems which make use of techniques involving the training of models with data shall be developed on the basis of training, validation and testing data sets that meet the quality criteria referred to in paragraphs 2 to 5.
+
+Art. 11 — Technical documentation
+The technical documentation of a high-risk AI system shall be drawn up before the high-risk AI system is placed on the market or put into service and shall be kept up-to-date.
+
+Art. 12 — Record-keeping
+1. High-risk AI systems shall technically allow for the automatic recording of events (logs) during the period of operation of the high-risk AI system.
+
+Art. 13 — Transparency and provision of information to deployers
+1. High-risk AI systems shall be designed and developed in such a way as to ensure that their operation is sufficiently transparent to enable deployers to interpret the system’s output and use it appropriately.
+
+Art. 14 — Human oversight
+1. High-risk AI systems shall be designed and developed in such a way, including with appropriate human-machine interface tools, that they can be effectively overseen by natural persons during the period in which they are in use.
+
+Art. 15 — Accuracy, robustness and cybersecurity
+1. High-risk AI systems shall be designed and developed in such a way that they achieve an appropriate level of accuracy, robustness, and cybersecurity, and perform consistently in those respects throughout their lifecycle.
+
+Art. 16 — Obligations of providers: post-market monitoring
+Providers of high-risk AI systems shall establish and document a post-market monitoring system in a manner that is proportionate to the nature of the AI technology and the risks of the high-risk AI system.
+
+Annex IV — (high-level reference for transparency, documentation, logging, human oversight, accuracy, and monitoring themes)
+Technical documentation shall contain specified information on the general description of the AI system, detailed description of monitoring, functioning and control, risk management system, changes to the system, human oversight, and validation/testing.
+
+Art. 8 — Compliance with requirements
+High-risk AI systems shall comply with the requirements laid down in this Chapter, taking into account their intended purpose as well as the generally acknowledged state of the art.
+
+Art. 17 — Quality management system
+Providers of high-risk AI systems shall put a quality management system in place that ensures compliance with this Regulation.
+
+Art. 19 — EU declaration of conformity
+1. The provider shall draw up an EU declaration of conformity for each high-risk AI system.
+
+Art. 61 — Post-market monitoring by providers and post-market monitoring plan for high-risk AI systems
+The post-market monitoring system shall operate proportionately, collecting data allowing providers to analyse the performance of high-risk AI systems throughout their lifetime.
+
+Art. 72 — Confidentiality
+All parties involved in application and enforcement shall respect trade secrets and confidential information in accordance with Union and national law.
+
+Art. 6 — Classification rules for high-risk AI systems
+A system shall be considered a high-risk AI system if it meets the criteria set out in this Article, including where it is intended to be used in areas listed in Annex III or is a safety component of a product covered by Union harmonisation legislation.
+
+Art. 7 — Amendments to Annex III
+The Commission may adopt delegated acts to amend Annex III to update the areas or use cases of high-risk AI systems.
+
+Art. 74 — Penalties
+Member States shall lay down rules on penalties for infringements of this Regulation.
+
+Art. 114 — Evaluation and review
+The Commission shall periodically evaluate and report on the functioning of the AI regulatory framework.
+
+Art. 113 — Entry into force and application
+This Regulation shall enter into force on the twentieth day following its publication in the Official Journal; a set of provisions shall apply thereafter as specified therein.
+
+Note: Replace or extend this file with your own consolidated excerpts from EUR-Lex if you need longer cache anchors (Anthropic prompt caching requires a minimum cacheable prefix length per model tier).

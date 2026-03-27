@@ -26,7 +26,6 @@ import {
 import {
   type TraceabilityRow,
   type TrafficState,
-  mockTraceabilityRows,
 } from "@/lib/golden-set";
 import { cn } from "@/lib/utils";
 
@@ -41,10 +40,19 @@ function trafficBadgeClass(s: TrafficState) {
 const columns: ColumnDef<TraceabilityRow>[] = [
   {
     accessorKey: "euArticle",
-    header: "EU AI Act",
+    header: "Citation",
     cell: ({ row }) => (
       <span className="font-mono text-[11px] tabular-nums">
         {row.original.euArticle}
+      </span>
+    ),
+  },
+  {
+    accessorKey: "instrument",
+    header: "Instrument",
+    cell: ({ row }) => (
+      <span className="font-mono text-[10px] text-muted-foreground">
+        {row.original.instrument}
       </span>
     ),
   },
@@ -90,7 +98,10 @@ const columns: ColumnDef<TraceabilityRow>[] = [
     cell: ({ row }) => (
       <Badge
         variant="outline"
-        className={cn("h-4 px-1.5 text-[10px] font-semibold", trafficBadgeClass(row.original.traffic))}
+        className={cn(
+          "h-4 px-1.5 text-[10px] font-semibold",
+          trafficBadgeClass(row.original.traffic)
+        )}
       >
         {row.original.traffic}
       </Badge>
@@ -98,8 +109,14 @@ const columns: ColumnDef<TraceabilityRow>[] = [
   },
 ];
 
-export function TraceabilityMatrix() {
-  const data = useMemo(() => mockTraceabilityRows, []);
+export function TraceabilityMatrix({
+  traceRows,
+  sourcePath,
+}: {
+  traceRows: TraceabilityRow[];
+  sourcePath: string;
+}) {
+  const data = useMemo(() => traceRows, [traceRows]);
   const table = useReactTable({
     data,
     columns,
@@ -110,8 +127,11 @@ export function TraceabilityMatrix() {
     <Card className="flex h-full min-h-0 flex-col gap-0 rounded-panel border-hairline border-border bg-surface py-2 shadow-none ring-0">
       <CardHeader className="space-y-0 border-b border-border px-3 py-2 [.border-b]:pb-2">
         <CardTitle className="font-mono text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">
-          Traceability matrix · Golden set (EU AI Act ↔ FastAPI)
+          Traceability matrix · ground truth
         </CardTitle>
+        <p className="pt-0.5 font-mono text-[10px] leading-tight text-muted-foreground">
+          {sourcePath}
+        </p>
       </CardHeader>
       <CardContent className="min-h-0 flex-1 px-0 pb-2">
         <Table>
