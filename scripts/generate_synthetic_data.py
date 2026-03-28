@@ -23,68 +23,40 @@ load_dotenv(ROOT / ".env")
 from database.init_lancedb import init_legal_corpus_table
 from database.client import LEGAL_CHUNKS_TABLE, VECTOR_DIM, connect, list_table_names
 
-SYSTEM_PROMPT = """Role: You are a Senior Regulatory ML Engineer generating supervised fine-tuning examples for a compliance model. Outputs must be high-fidelity and statistically diverse.
+SYSTEM_PROMPT = """You are a Lead Regulatory ML Engineer generating synthetic Supervised Fine-Tuning (SFT) data for a compliance model enforcing the EU AI Act (Regulation (EU) 2024/1689).
 
-LEGAL GROUNDING (NON-NEGOTIABLE)
+INSTRUCTIONS:
+1. Generate highly realistic, diverse FastAPI/Python architectural scenarios based on the provided Golden Examples.
+2. Avoid Over-Determinism: Do not state that a specific technical implementation (like a static threshold or a lack of a fallback) is inherently illegal. Instead, explain how the implementation *fails to satisfy the operational capability or standard* required by the specific Article.
+3. Scope: Assume all scenarios apply to systems classified under Annex III.
 
-No Hallucinations: Use only Regulation (EU) 2024/1689. Do not invent articles.
+REQUIRED JSON SCHEMA FOR EACH OBJECT:
+- "legal_anchor": The specific Article citation (e.g., "Art. 15(1), Reg. 2024/1689").
+- "clause": The text or paraphrase of the legal requirement.
+- "system_classification": Always use the exact string "high-risk (Annex III)".
+- "violation_subtlety": "overt" | "borderline" | "omission".
+- "uncertainty_factor": Float from 0.1 (highly ambiguous/subtle) to 1.0 (blatant violation).
+- "non_compliant_code": Realistic Python/FastAPI code showing the deficiency.
+- "compliance_justification": Concise (1-2 sentences) legal reasoning. Explain why the code fails to demonstrate the required capability. Do not write a long chain-of-thought.
+- "compliant_fix": The refactored, compliant code.
+- "complexity": "simple_route" | "middleware" | "background_task" | "dependency_injection".
 
-Real Citations: Reference real Articles (e.g., Art. 8–15) or Annexes.
-
-Clause Extraction: Use a faithful paraphrase or a verbatim excerpt from the user-provided golden set.
-
-Legal Anchor: Every JSON object must include a legal_anchor string (e.g., "Art. 14(4), Reg. 2024/1689").
-
-TASK: GENERATE SYNTHETIC TRAINING ROWS
-Each row must include:
-
-"clause": The specific legal obligation.
-
-"violation_subtlety": One of overt (obvious violation) | borderline (debatable/nuanced) | omission (missing a required component).
-
-"uncertainty_factor": A float from 0.1 to 1.0.
-
-0.1-0.3: Extremely subtle; likely to pass a basic linter but fail a deep audit.
-
-0.8-1.0: Blatant violation of safety/transparency.
-
-"non_compliant_code": Realistic Python/FastAPI code showing the violation.
-
-"chain_of_thought": Step-by-step reasoning. Crucial: For low uncertainty_factor items, explain the legal ambiguity.
-
-"compliant_fix": The corrected code snippet.
-
-"complexity": simple_route | middleware | background_task | dependency_injection.
-
-BAYESIAN DIVERSITY REQUIREMENT
-
-30% of examples should be borderline. These are the most valuable for training the Bayesian Posterior Density curves.
-
-Vary the coding styles (e.g., some use Pydantic v2, some use raw dictionaries, some use custom decorators).
-
-DOMAIN / USE-CASE DIVERSITY (FICTIONAL CONTEXT ONLY)
-
-Across batches, vary the implied business context in non_compliant_code and compliant_fix: route names, docstrings, and variable semantics should suggest different high-risk deployer settings (e.g. clinical decision support, HR screening, credit or fraud scoring, remote proctoring, public-sector eligibility). Use plausible fictional product or company names. This is for scenario diversity only—legal_anchor and clause must still follow only real obligations from the provided regulation excerpts and golden set; do not invent Articles or map industries to fake rules.
-
-OUTPUT FORMAT
-
-Valid JSON array of objects.
-
-No markdown fences inside strings."""
-
-# Prepended to every DeepSeek system message (API text; ** reads as emphasis in markdown UIs).
-DEEPSEEK_JSON_DISCIPLINE = """**OUTPUT RAW, VALID JSON ONLY. DO NOT WRAP IN MARKDOWN. DO NOT ADD CONVERSATIONAL TEXT. YOUR ENTIRE RESPONSE MUST START WITH '[' AND END WITH ']'.**"""
+CRITICAL FORMATTING:
+OUTPUT RAW, VALID JSON ONLY. DO NOT WRAP IN MARKDOWN (no ```json). DO NOT ADD CONVERSATIONAL TEXT. YOUR ENTIRE RESPONSE MUST START WITH '[' AND END WITH ']'."""
 
 REQUIRED_KEYS = (
     "legal_anchor",
     "clause",
+    "system_classification",
     "violation_subtlety",
     "uncertainty_factor",
     "non_compliant_code",
-    "chain_of_thought",
+    "compliance_justification",
     "compliant_fix",
     "complexity",
 )
+
+ANNEX_III_CLASS = "high-risk (Annex III)"
 
 SUBTLETY = frozenset({"overt", "borderline", "omission"})
 COMPLEXITY = frozenset({"simple_route", "middleware", "background_task", "dependency_injection"})
@@ -92,15 +64,18 @@ COMPLEXITY = frozenset({"simple_route", "middleware", "background_task", "depend
 DEFAULT_CLAUDE_MODEL = "claude-opus-4-6-20260219"
 # DeepSeek-V3.2-Speciale: reasoning-first; API does not use tool-calling for this variant (HF + DeepSeek docs).
 # Hugging Face local deployment recommends temperature=1.0, top_p=0.95 for V3.2 / Speciale.
-DEFAULT_DEEPSEEK_MODEL = "deepseek-v3.2-speciale"
+# Public API default at https://api.deepseek.com — use DEEPSEEK_MODEL for e.g. deepseek-reasoner or Speciale ids.
+DEFAULT_DEEPSEEK_MODEL = "deepseek-chat"
 DEFAULT_DEEPSEEK_BASE_URL = "https://api.deepseek.com"
-DEFAULT_DEEPSEEK_TEMPERATURE = 1.0
+DEFAULT_DEEPSEEK_TEMPERATURE = 0.7
 DEFAULT_DEEPSEEK_TOP_P = 0.95
+# DeepSeek chat API rejects max_tokens above 8192 (error: valid range [1, 8192]).
+DEFAULT_DEEPSEEK_MAX_TOKENS = 8192
 PHASE1_PATH = ROOT / "data" / "synthetic_phase1_claude.json"
 COMBINED_PATH = ROOT / "data" / "synthetic_all_rows.json"
 
 DEFAULT_TOTAL_ROWS = 300
-DEFAULT_DEEPSEEK_ONLY_BATCH = 50
+DEFAULT_DEEPSEEK_ONLY_BATCH = 15
 
 
 def load_golden(path: Path) -> list:
@@ -175,7 +150,9 @@ def validate_row(obj: object) -> bool:
         return False
     if not (0.1 <= u <= 1.0):
         return False
-    for k in ("non_compliant_code", "chain_of_thought", "compliant_fix", "clause"):
+    if d.get("system_classification") != ANNEX_III_CLASS:
+        return False
+    for k in ("non_compliant_code", "compliance_justification", "compliant_fix", "clause"):
         if not isinstance(d[k], str) or not d[k].strip():
             return False
     if d["complexity"] not in COMPLEXITY:
@@ -197,17 +174,24 @@ def strip_provenance(rows: list[dict]) -> list[dict]:
 
 
 def normalize_golden_row(raw: dict) -> dict:
-    """Map golden_set.json shape (e.g. reasoning, text) to REQUIRED_KEYS."""
+    """Map golden_set.json shape (e.g. text, legacy reasoning) to REQUIRED_KEYS."""
     clause = (raw.get("clause") or raw.get("text") or "").strip()
-    cot = (raw.get("chain_of_thought") or raw.get("reasoning") or "").strip()
+    justification = (
+        raw.get("compliance_justification")
+        or raw.get("chain_of_thought")
+        or raw.get("reasoning")
+        or ""
+    ).strip()
     la = str(raw.get("legal_anchor", "")).strip()
+    sys_cls = str(raw.get("system_classification", ANNEX_III_CLASS)).strip()
     out = {
         "legal_anchor": la,
         "clause": clause,
+        "system_classification": sys_cls,
         "violation_subtlety": raw["violation_subtlety"],
         "uncertainty_factor": float(raw["uncertainty_factor"]),
         "non_compliant_code": str(raw.get("non_compliant_code", "")).strip(),
-        "chain_of_thought": cot,
+        "compliance_justification": justification,
         "compliant_fix": str(raw.get("compliant_fix", "")).strip(),
         "complexity": raw["complexity"],
     }
@@ -395,6 +379,14 @@ def build_deepseek_system_golden(
     return "\n\n".join(parts)
 
 
+def _deepseek_max_tokens_cap() -> int:
+    try:
+        raw = int(os.environ.get("DEEPSEEK_MAX_TOKENS", DEFAULT_DEEPSEEK_MAX_TOKENS))
+    except ValueError:
+        raw = DEFAULT_DEEPSEEK_MAX_TOKENS
+    return max(1, min(raw, 8192))
+
+
 def call_deepseek(
     *,
     model: str,
@@ -412,13 +404,14 @@ def call_deepseek(
     if not key:
         raise RuntimeError("DEEPSEEK_API_KEY is not set")
     client = OpenAI(api_key=key, base_url=base_url)
-    full_system = DEEPSEEK_JSON_DISCIPLINE + "\n\n" + system_text
+    full_system = system_text
+    max_tokens = _deepseek_max_tokens_cap()
     last_err: Exception | None = None
     for attempt in range(max_retries):
         try:
             resp = client.chat.completions.create(
                 model=model,
-                max_tokens=16384,
+                max_tokens=max_tokens,
                 temperature=temperature,
                 top_p=top_p,
                 messages=[
@@ -695,7 +688,7 @@ def rows_to_lance_payloads(rows: list[dict], embedder_model: str) -> list[dict]:
             [
                 r["clause"],
                 r["non_compliant_code"],
-                r["chain_of_thought"],
+                r["compliance_justification"],
                 r["compliant_fix"],
             ]
         )
@@ -776,7 +769,7 @@ def main() -> int:
         "--batch-size",
         type=int,
         default=DEFAULT_DEEPSEEK_ONLY_BATCH,
-        help="DeepSeek request batch size (default 50; max 50).",
+        help="API batch size: rows requested per DeepSeek call (default 15; max 50).",
     )
     ap.add_argument(
         "--claude-model",
@@ -794,9 +787,8 @@ def main() -> int:
         "--deepseek-model",
         default=os.environ.get("DEEPSEEK_MODEL", DEFAULT_DEEPSEEK_MODEL),
         help=(
-            "Default: deepseek-v3.2-speciale (DeepSeek-V3.2-Speciale). "
-            "If the official API rejects this id, set DEEPSEEK_MODEL=deepseek-chat and DEEPSEEK_BASE_URL "
-            "to the Speciale route from https://api-docs.deepseek.com/updates/"
+            "Default: deepseek-chat. Alternatives: deepseek-reasoner, or a Speciale id if your account exposes it "
+            "(set DEEPSEEK_MODEL / DEEPSEEK_BASE_URL per https://api-docs.deepseek.com/)."
         ),
     )
     ap.add_argument(
@@ -843,6 +835,11 @@ def main() -> int:
         help="all rows before ingest",
     )
     ap.add_argument(
+        "--skip-ingest",
+        action="store_true",
+        help="deepseek-only: write combined JSON only; do not embed into LanceDB or update dataset_health.json.",
+    )
+    ap.add_argument(
         "--dry-run",
         action="store_true",
     )
@@ -865,6 +862,7 @@ def main() -> int:
     if args.dry_run:
         print(f"phase: {args.phase}")
         print(f"total={args.total}")
+        print(f"skip_ingest={args.skip_ingest}")
         print(f"pause_after_claude={args.pause_after_claude}")
         print(f"claude_count={args.claude_count} deepseek_count={args.deepseek_count}")
         print(f"batch_size={args.batch_size}")
@@ -874,6 +872,7 @@ def main() -> int:
         print(
             f"deepseek sampling: temperature={args.deepseek_temperature} top_p={args.deepseek_top_p}"
         )
+        print(f"deepseek max_tokens={_deepseek_max_tokens_cap()} (cap 8192)")
         print(f"regulation chars: {len(regulation)}")
         print(f"phase1_out={args.phase1_out}")
         print(f"combined_out={args.combined_out}")
@@ -947,6 +946,9 @@ def main() -> int:
             f"wrote combined: {args.combined_out} ({len(combined)} rows; "
             f"{n_golden} golden + {len(deep_only)} DeepSeek)"
         )
+        if args.skip_ingest:
+            print("Skipped LanceDB ingest (--skip-ingest). Review the file, then run full generation or --phase ingest-only.")
+            return 0
         payloads = rows_to_lance_payloads(combined, args.embedder)
         count = ingest_lance(payloads)
         write_health(count)
