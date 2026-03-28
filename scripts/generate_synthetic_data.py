@@ -1,4 +1,4 @@
-"""Generate SFT rows: Claude (phase 1) then DeepSeek (phase 2) with Claude as few-shot anchor."""
+"""Generate SFT rows: default path is DeepSeek-only (golden few-shot + synthetic rows); optional Claude legacy phases."""
 
 from __future__ import annotations
 
@@ -15,6 +15,10 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
+
+from dotenv import load_dotenv
+
+load_dotenv(ROOT / ".env")
 
 from database.init_lancedb import init_legal_corpus_table
 from database.client import LEGAL_CHUNKS_TABLE, VECTOR_DIM, connect, list_table_names
@@ -58,11 +62,18 @@ BAYESIAN DIVERSITY REQUIREMENT
 
 Vary the coding styles (e.g., some use Pydantic v2, some use raw dictionaries, some use custom decorators).
 
+DOMAIN / USE-CASE DIVERSITY (FICTIONAL CONTEXT ONLY)
+
+Across batches, vary the implied business context in non_compliant_code and compliant_fix: route names, docstrings, and variable semantics should suggest different high-risk deployer settings (e.g. clinical decision support, HR screening, credit or fraud scoring, remote proctoring, public-sector eligibility). Use plausible fictional product or company names. This is for scenario diversity only—legal_anchor and clause must still follow only real obligations from the provided regulation excerpts and golden set; do not invent Articles or map industries to fake rules.
+
 OUTPUT FORMAT
 
 Valid JSON array of objects.
 
 No markdown fences inside strings."""
+
+# Prepended to every DeepSeek system message (API text; ** reads as emphasis in markdown UIs).
+DEEPSEEK_JSON_DISCIPLINE = """**OUTPUT RAW, VALID JSON ONLY. DO NOT WRAP IN MARKDOWN. DO NOT ADD CONVERSATIONAL TEXT. YOUR ENTIRE RESPONSE MUST START WITH '[' AND END WITH ']'.**"""
 
 REQUIRED_KEYS = (
     "legal_anchor",
@@ -79,11 +90,17 @@ SUBTLETY = frozenset({"overt", "borderline", "omission"})
 COMPLEXITY = frozenset({"simple_route", "middleware", "background_task", "dependency_injection"})
 
 DEFAULT_CLAUDE_MODEL = "claude-opus-4-6-20260219"
-# DeepSeek-V3.2-Speciale (reasoning-first; no tool calls on Speciale route — see api-docs.deepseek.com)
+# DeepSeek-V3.2-Speciale: reasoning-first; API does not use tool-calling for this variant (HF + DeepSeek docs).
+# Hugging Face local deployment recommends temperature=1.0, top_p=0.95 for V3.2 / Speciale.
 DEFAULT_DEEPSEEK_MODEL = "deepseek-v3.2-speciale"
 DEFAULT_DEEPSEEK_BASE_URL = "https://api.deepseek.com"
+DEFAULT_DEEPSEEK_TEMPERATURE = 1.0
+DEFAULT_DEEPSEEK_TOP_P = 0.95
 PHASE1_PATH = ROOT / "data" / "synthetic_phase1_claude.json"
 COMBINED_PATH = ROOT / "data" / "synthetic_all_rows.json"
+
+DEFAULT_TOTAL_ROWS = 300
+DEFAULT_DEEPSEEK_ONLY_BATCH = 50
 
 
 def load_golden(path: Path) -> list:
@@ -94,21 +111,50 @@ def load_golden(path: Path) -> list:
     return data
 
 
+def _extract_json_array_payload(text: str) -> str:
+    """Take first '[' ... matching ']' as balanced segments, respecting JSON string boundaries (handles ] inside code strings)."""
+    text = text.strip()
+    if not text:
+        raise ValueError("empty model response")
+    start = text.find("[")
+    if start == -1:
+        raise ValueError("no JSON array start '[' in response")
+    depth = 0
+    in_string = False
+    escape = False
+    for i in range(start, len(text)):
+        c = text[i]
+        if in_string:
+            if escape:
+                escape = False
+            elif c == "\\":
+                escape = True
+            elif c == '"':
+                in_string = False
+            continue
+        if c == '"':
+            in_string = True
+            continue
+        if c == "[":
+            depth += 1
+        elif c == "]":
+            depth -= 1
+            if depth == 0:
+                return text[start : i + 1]
+    raise ValueError("unclosed or malformed JSON array in response")
+
+
 def extract_json_array(text: str) -> list:
+    """Strip markdown fences / chatter; parse JSON array via balanced '[' … ']' extraction then json.loads."""
     text = text.strip()
     if not text:
         raise ValueError("empty model response")
     if text.startswith("```"):
         text = re.sub(r"^```(?:json)?\s*", "", text, flags=re.IGNORECASE)
         text = re.sub(r"\s*```\s*$", "", text)
-    text = text.strip()
-    if not text.startswith("["):
-        start = text.find("[")
-        end = text.rfind("]")
-        if start == -1 or end == -1 or end <= start:
-            raise ValueError("no JSON array found in response")
-        text = text[start : end + 1]
-    return json.loads(text)
+        text = text.strip()
+    payload = _extract_json_array_payload(text)
+    return json.loads(payload)
 
 
 def validate_row(obj: object) -> bool:
@@ -144,6 +190,36 @@ def row_fingerprint(d: dict) -> str:
         (d["clause"][:400] + "|" + d["non_compliant_code"][:600]).encode("utf8")
     ).hexdigest()
     return h
+
+
+def strip_provenance(rows: list[dict]) -> list[dict]:
+    return [{k: v for k, v in r.items() if k != "_provenance"} for r in rows]
+
+
+def normalize_golden_row(raw: dict) -> dict:
+    """Map golden_set.json shape (e.g. reasoning, text) to REQUIRED_KEYS."""
+    clause = (raw.get("clause") or raw.get("text") or "").strip()
+    cot = (raw.get("chain_of_thought") or raw.get("reasoning") or "").strip()
+    la = str(raw.get("legal_anchor", "")).strip()
+    out = {
+        "legal_anchor": la,
+        "clause": clause,
+        "violation_subtlety": raw["violation_subtlety"],
+        "uncertainty_factor": float(raw["uncertainty_factor"]),
+        "non_compliant_code": str(raw.get("non_compliant_code", "")).strip(),
+        "chain_of_thought": cot,
+        "compliant_fix": str(raw.get("compliant_fix", "")).strip(),
+        "complexity": raw["complexity"],
+    }
+    if not validate_row(out):
+        rid = raw.get("id", "?")
+        raise ValueError(f"golden row failed validation after normalize: {rid}")
+    out["_provenance"] = "golden"
+    return out
+
+
+def normalize_golden_rows(golden: list) -> list[dict]:
+    return [normalize_golden_row(r) for r in golden]
 
 
 def load_regulation_context(path: Path) -> str:
@@ -298,7 +374,23 @@ def build_deepseek_system(
         )
     parts.append(
         "=== FEW-SHOT EXAMPLES (Claude Opus — replicate this schema, tone, and JSON shape exactly; generate NEW rows, do not copy) ===\n"
-        + json.dumps(claude_few_shot, indent=2, ensure_ascii=False)
+        + json.dumps(strip_provenance(claude_few_shot), indent=2, ensure_ascii=False)
+    )
+    return "\n\n".join(parts)
+
+
+def build_deepseek_system_golden(
+    regulation_excerpt: str,
+    golden_few_shot: list[dict],
+) -> str:
+    parts = [SYSTEM_PROMPT]
+    if regulation_excerpt:
+        parts.append(
+            "=== Regulation (EU) 2024/1689 — static excerpts ===\n" + regulation_excerpt
+        )
+    parts.append(
+        "=== FEW-SHOT GROUND TRUTH (verified golden set — replicate schema, tone, and JSON shape exactly; generate NEW rows, do not copy or paraphrase these rows) ===\n"
+        + json.dumps(strip_provenance(golden_few_shot), indent=2, ensure_ascii=False)
     )
     return "\n\n".join(parts)
 
@@ -310,6 +402,8 @@ def call_deepseek(
     system_text: str,
     user_text: str,
     batch_idx: int,
+    temperature: float,
+    top_p: float,
     max_retries: int = 5,
 ) -> list:
     from openai import OpenAI
@@ -318,14 +412,17 @@ def call_deepseek(
     if not key:
         raise RuntimeError("DEEPSEEK_API_KEY is not set")
     client = OpenAI(api_key=key, base_url=base_url)
+    full_system = DEEPSEEK_JSON_DISCIPLINE + "\n\n" + system_text
     last_err: Exception | None = None
     for attempt in range(max_retries):
         try:
             resp = client.chat.completions.create(
                 model=model,
                 max_tokens=16384,
+                temperature=temperature,
+                top_p=top_p,
                 messages=[
-                    {"role": "system", "content": system_text},
+                    {"role": "system", "content": full_system},
                     {"role": "user", "content": user_text},
                 ],
             )
@@ -431,6 +528,8 @@ def run_deepseek_phase(
     regulation: str,
     deepseek_model: str,
     deepseek_base_url: str,
+    deepseek_temperature: float,
+    deepseek_top_p: float,
 ) -> list[dict]:
     if not claude_rows:
         raise ValueError("DeepSeek phase requires non-empty Claude few-shot rows")
@@ -468,6 +567,8 @@ def run_deepseek_phase(
             system_text=system_text,
             user_text=user_text,
             batch_idx=batch_idx,
+            temperature=deepseek_temperature,
+            top_p=deepseek_top_p,
         )
         if not isinstance(raw_list, list):
             raise ValueError("DeepSeek did not return a JSON array")
@@ -489,6 +590,80 @@ def run_deepseek_phase(
         else:
             stale = 0
         print(f"  [DeepSeek] batch {batch_idx}: valid {len(acc)}/{target}")
+    return acc
+
+
+def run_deepseek_golden_only_phase(
+    *,
+    target: int,
+    batch_size: int,
+    golden_rows_normalized: list[dict],
+    regulation: str,
+    deepseek_model: str,
+    deepseek_base_url: str,
+    deepseek_temperature: float,
+    deepseek_top_p: float,
+) -> list[dict]:
+    """Generate `target` new rows using DeepSeek; golden set is few-shot only (fingerprints seeded to avoid duplicates)."""
+    if target < 1:
+        return []
+    seen: set[str] = set()
+    for r in golden_rows_normalized:
+        clean = {k: v for k, v in r.items() if k != "_provenance"}
+        seen.add(row_fingerprint(clean))
+    acc: list[dict] = []
+    system_text = build_deepseek_system_golden(regulation, golden_rows_normalized)
+    batch_total = max(1, (target + batch_size - 1) // batch_size)
+    batch_idx = 0
+    stale = 0
+    while len(acc) < target:
+        prior = len(acc)
+        batch_idx += 1
+        if batch_idx > 250:
+            raise RuntimeError("deepseek batch limit exceeded")
+        need = min(batch_size, target - len(acc))
+        borderline_count = sum(1 for r in acc if r.get("violation_subtlety") == "borderline")
+        target_borderline = int(round(0.3 * target))
+        borderline_needed = max(0, min(need, target_borderline - borderline_count))
+        user_text = (
+            "The system message contains Regulation excerpts and the verified golden-set few-shot examples. "
+            "Produce NEW synthetic rows that match their JSON schema and style exactly.\n\n"
+        ) + build_user_message_dynamic(
+            batch_idx,
+            batch_total,
+            need,
+            borderline_needed,
+            golden_in_system_prompt=True,
+        )
+        raw_list = call_deepseek(
+            model=deepseek_model,
+            base_url=deepseek_base_url,
+            system_text=system_text,
+            user_text=user_text,
+            batch_idx=batch_idx,
+            temperature=deepseek_temperature,
+            top_p=deepseek_top_p,
+        )
+        if not isinstance(raw_list, list):
+            raise ValueError("DeepSeek did not return a JSON array")
+        for obj in raw_list:
+            if len(acc) >= target:
+                break
+            if not validate_row(obj):
+                continue
+            fp = row_fingerprint(obj)
+            if fp in seen:
+                continue
+            seen.add(fp)
+            obj["_provenance"] = "deepseek"
+            acc.append(obj)
+        if len(acc) == prior:
+            stale += 1
+            if stale >= 12:
+                raise RuntimeError("DeepSeek: no new valid rows in 12 consecutive batches")
+        else:
+            stale = 0
+        print(f"  [DeepSeek golden-only] batch {batch_idx}: valid {len(acc)}/{target}")
     return acc
 
 
@@ -565,17 +740,44 @@ def write_health(total: int) -> None:
 
 def main() -> int:
     ap = argparse.ArgumentParser(
-        description="Phase 1: Claude Opus. Phase 2: DeepSeek with Claude rows as few-shot. Then LanceDB ingest.",
+        description=(
+            "Default: DeepSeek-only 300-row dataset (15 golden few-shot + 285 generated in batches). "
+            "Legacy: Claude then DeepSeek with Claude few-shot."
+        ),
     )
     ap.add_argument("--claude-count", type=int, default=100)
     ap.add_argument("--deepseek-count", type=int, default=200)
     ap.add_argument(
-        "--phase",
-        choices=("all", "claude", "deepseek", "ingest-only"),
-        default="all",
-        help="all=Claude then DeepSeek then DB; claude=phase1 only; deepseek=phase2 (needs phase1 file); ingest-only=embed existing combined JSON",
+        "--total",
+        type=int,
+        default=DEFAULT_TOTAL_ROWS,
+        help="deepseek-only: total rows in combined output (golden + generated). Default 300.",
     )
-    ap.add_argument("--batch-size", type=int, default=20)
+    ap.add_argument(
+        "--phase",
+        choices=("deepseek-only", "all", "claude", "deepseek", "ingest-only"),
+        default="deepseek-only",
+        help=(
+            "deepseek-only=golden few-shot + generate remainder with DeepSeek (default); "
+            "all=Claude then DeepSeek (--pause-after-claude supported); "
+            "claude=phase1 only; deepseek=legacy phase2 (needs synthetic_phase1_claude.json); "
+            "ingest-only=embed existing combined JSON"
+        ),
+    )
+    ap.add_argument(
+        "--pause-after-claude",
+        action="store_true",
+        help=(
+            "With --phase all: run Claude only, write phase1 file, then exit. "
+            "Review the file, then run again with --phase deepseek (same paths)."
+        ),
+    )
+    ap.add_argument(
+        "--batch-size",
+        type=int,
+        default=DEFAULT_DEEPSEEK_ONLY_BATCH,
+        help="DeepSeek request batch size (default 50; max 50).",
+    )
     ap.add_argument(
         "--claude-model",
         default=os.environ.get("CLAUDE_MODEL")
@@ -601,6 +803,16 @@ def main() -> int:
         "--deepseek-base-url",
         default=os.environ.get("DEEPSEEK_BASE_URL", DEFAULT_DEEPSEEK_BASE_URL),
         help="OpenAI-compatible base URL (default https://api.deepseek.com). Speciale may use a path under the same host per DeepSeek docs.",
+    )
+    ap.add_argument(
+        "--deepseek-temperature",
+        type=float,
+        default=float(os.environ.get("DEEPSEEK_TEMPERATURE", DEFAULT_DEEPSEEK_TEMPERATURE)),
+    )
+    ap.add_argument(
+        "--deepseek-top-p",
+        type=float,
+        default=float(os.environ.get("DEEPSEEK_TOP_P", DEFAULT_DEEPSEEK_TOP_P)),
     )
     ap.add_argument(
         "--embedder",
@@ -652,10 +864,16 @@ def main() -> int:
 
     if args.dry_run:
         print(f"phase: {args.phase}")
+        print(f"total={args.total}")
+        print(f"pause_after_claude={args.pause_after_claude}")
         print(f"claude_count={args.claude_count} deepseek_count={args.deepseek_count}")
+        print(f"batch_size={args.batch_size}")
         print(f"claude_model={claude_model}")
         print(f"deepseek_model={args.deepseek_model}")
         print(f"deepseek_base_url={args.deepseek_base_url}")
+        print(
+            f"deepseek sampling: temperature={args.deepseek_temperature} top_p={args.deepseek_top_p}"
+        )
         print(f"regulation chars: {len(regulation)}")
         print(f"phase1_out={args.phase1_out}")
         print(f"combined_out={args.combined_out}")
@@ -664,7 +882,10 @@ def main() -> int:
     if args.phase in ("all", "claude") and not os.environ.get("ANTHROPIC_API_KEY"):
         print("Set ANTHROPIC_API_KEY for Claude phase", file=sys.stderr)
         return 1
-    if args.phase in ("all", "deepseek") and not os.environ.get("DEEPSEEK_API_KEY"):
+    need_deepseek = args.phase in ("deepseek-only", "deepseek") or (
+        args.phase == "all" and not args.pause_after_claude
+    )
+    if need_deepseek and not os.environ.get("DEEPSEEK_API_KEY"):
         print("Set DEEPSEEK_API_KEY for DeepSeek phase", file=sys.stderr)
         return 1
 
@@ -694,6 +915,45 @@ def main() -> int:
     golden = load_golden(args.golden)
     batch_size = max(1, min(args.batch_size, 50))
 
+    if args.phase == "deepseek-only":
+        golden_norm = normalize_golden_rows(golden)
+        n_golden = len(golden_norm)
+        need = args.total - n_golden
+        if need < 0:
+            print(
+                f"--total {args.total} is smaller than normalized golden set size ({n_golden})",
+                file=sys.stderr,
+            )
+            return 1
+        deep_only: list[dict] = []
+        if need > 0:
+            deep_only = run_deepseek_golden_only_phase(
+                target=need,
+                batch_size=batch_size,
+                golden_rows_normalized=golden_norm,
+                regulation=regulation,
+                deepseek_model=args.deepseek_model,
+                deepseek_base_url=args.deepseek_base_url,
+                deepseek_temperature=args.deepseek_temperature,
+                deepseek_top_p=args.deepseek_top_p,
+            )
+        combined = golden_norm + deep_only
+        args.combined_out.parent.mkdir(parents=True, exist_ok=True)
+        args.combined_out.write_text(
+            json.dumps(combined, indent=2, ensure_ascii=False) + "\n",
+            encoding="utf8",
+        )
+        print(
+            f"wrote combined: {args.combined_out} ({len(combined)} rows; "
+            f"{n_golden} golden + {len(deep_only)} DeepSeek)"
+        )
+        payloads = rows_to_lance_payloads(combined, args.embedder)
+        count = ingest_lance(payloads)
+        write_health(count)
+        print(f"LanceDB legal_chunks total rows: {count}")
+        print(f"wrote {ROOT / 'data' / 'dataset_health.json'}")
+        return 0
+
     claude_rows: list[dict] = []
     if args.phase in ("all", "claude"):
         claude_rows = run_claude_phase(
@@ -712,7 +972,18 @@ def main() -> int:
         )
         print(f"wrote Claude phase: {args.phase1_out} ({len(claude_rows)} rows)")
         if args.phase == "claude":
-            print("Done (--phase claude). Run again with --phase deepseek or --phase all.")
+            print(
+                "Review the file above, then continue with DeepSeek + ingest, for example:\n"
+                f"  python scripts/generate_synthetic_data.py --phase deepseek "
+                f"--phase1-out {args.phase1_out} --combined-out {args.combined_out}"
+            )
+            return 0
+        if args.pause_after_claude:
+            print(
+                "Paused after Claude (--pause-after-claude). Review the phase1 file, then run:\n"
+                f"  python scripts/generate_synthetic_data.py --phase deepseek "
+                f"--phase1-out {args.phase1_out} --combined-out {args.combined_out}"
+            )
             return 0
     elif args.phase == "deepseek":
         if not args.phase1_out.is_file():
@@ -733,6 +1004,8 @@ def main() -> int:
             regulation=regulation,
             deepseek_model=args.deepseek_model,
             deepseek_base_url=args.deepseek_base_url,
+            deepseek_temperature=args.deepseek_temperature,
+            deepseek_top_p=args.deepseek_top_p,
         )
         print(f"DeepSeek phase: {len(deep_rows)} rows")
 
