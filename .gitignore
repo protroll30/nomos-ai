@@ -25,6 +25,8 @@ build/
 database/lancedb_data/
 
 data/dataset_health.json
+data/synthetic_phase1_claude.json
+data/synthetic_all_rows.json
 
 dashboard/node_modules/
 dashboard/.next/

@@ -9,3 +9,4 @@ sentence-transformers
 scipy
 mcp[cli]
 anthropic
+openai>=1.0
