@@ -1,4 +1,9 @@
 unsloth
+trl
+transformers
+datasets
+accelerate
+bitsandbytes
 lancedb
 pyarrow
 fastapi
