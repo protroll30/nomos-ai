@@ -122,7 +122,7 @@ def main() -> int:
         lr_scheduler_type="linear",
         seed=42,
         output_dir=str(args.output_dir),
-        evaluation_strategy="steps" if eval_ds is not None else "no",
+        eval_strategy="steps" if eval_ds is not None else "no",
         eval_steps=20 if eval_ds is not None else None,
         save_strategy="steps",
         save_steps=20,
