@@ -131,13 +131,12 @@ def main() -> int:
 
     trainer = SFTTrainer(
         model=model,
-        tokenizer=tokenizer,
         train_dataset=train_ds,
         eval_dataset=eval_ds,
-        dataset_text_field="text",
         max_seq_length=args.max_seq_length,
         dataset_num_proc=1,
         packing=False,
+        processing_class=tokenizer,
         args=ta,
     )
 
