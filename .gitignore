@@ -53,3 +53,5 @@ runs/
 wandb/
 mlruns/
 .cache/
+
+unsloth_compiled_cache/
