@@ -32,8 +32,7 @@ def main() -> int:
 
     import torch
     from datasets import load_dataset
-    from transformers import TrainingArguments
-    from trl import SFTTrainer
+    from trl import SFTConfig, SFTTrainer
     from unsloth import FastLanguageModel
 
     if not torch.cuda.is_available():
@@ -107,7 +106,8 @@ def main() -> int:
     fp16 = not torch.cuda.is_bf16_supported()
     bf16 = torch.cuda.is_bf16_supported()
 
-    ta = TrainingArguments(
+    sft_args = SFTConfig(
+        output_dir=str(args.output_dir),
         per_device_train_batch_size=args.batch_size,
         per_device_eval_batch_size=args.batch_size,
         gradient_accumulation_steps=args.grad_accum,
@@ -121,23 +121,23 @@ def main() -> int:
         weight_decay=0.01,
         lr_scheduler_type="linear",
         seed=42,
-        output_dir=str(args.output_dir),
         eval_strategy="steps" if eval_ds is not None else "no",
         eval_steps=20 if eval_ds is not None else None,
         save_strategy="steps",
         save_steps=20,
         report_to="none",
+        gradient_checkpointing=False,
+        max_length=args.max_seq_length,
+        packing=False,
+        dataset_num_proc=1,
     )
 
     trainer = SFTTrainer(
         model=model,
+        args=sft_args,
         train_dataset=train_ds,
         eval_dataset=eval_ds,
-        max_seq_length=args.max_seq_length,
-        dataset_num_proc=1,
-        packing=False,
         processing_class=tokenizer,
-        args=ta,
     )
 
     trainer.train()
