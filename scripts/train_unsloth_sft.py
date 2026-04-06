@@ -32,8 +32,8 @@ def main() -> int:
 
     import torch
     from datasets import load_dataset
-    from trl import SFTConfig, SFTTrainer
     from unsloth import FastLanguageModel
+    from trl import SFTConfig, SFTTrainer
 
     if not torch.cuda.is_available():
         print(
@@ -130,6 +130,7 @@ def main() -> int:
         max_length=args.max_seq_length,
         packing=False,
         dataset_num_proc=1,
+        eos_token=None,
     )
 
     trainer = SFTTrainer(
