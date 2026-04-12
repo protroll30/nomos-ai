@@ -36,6 +36,12 @@ def main() -> int:
     ap.add_argument("--max-seq-length", type=int, default=4096)
     ap.add_argument("--max-new-tokens", type=int, default=1024)
     ap.add_argument("--limit", type=int, default=0, help="Max rows (0 = all).")
+    ap.add_argument(
+        "--dump-preds",
+        type=Path,
+        default=None,
+        help="Write JSONL with messages + pred_assistant per row (for eval_llm_judge.py).",
+    )
     args = ap.parse_args()
 
     import torch
@@ -70,6 +76,8 @@ def main() -> int:
 
     if args.limit > 0:
         rows = rows[: args.limit]
+
+    dump_records: list[dict] = []
 
     n = len(rows)
     json_ok = 0
@@ -121,6 +129,22 @@ def main() -> int:
 
         print(f"--- row {i + 1}/{n} ---")
         print(pred_text[:500] + ("…" if len(pred_text) > 500 else ""))
+
+        if args.dump_preds is not None:
+            dump_records.append(
+                {
+                    "index": i,
+                    "messages": msgs,
+                    "pred_assistant": pred_text,
+                }
+            )
+
+    if args.dump_preds is not None:
+        args.dump_preds.parent.mkdir(parents=True, exist_ok=True)
+        with args.dump_preds.open("w", encoding="utf-8") as out:
+            for rec in dump_records:
+                out.write(json.dumps(rec, ensure_ascii=False) + "\n")
+        print(f"\nwrote {len(dump_records)} rows to {args.dump_preds}")
 
     prec = f1_num / f1_den_p if f1_den_p else 0.0
     rec = f1_num / f1_den_r if f1_den_r else 0.0
