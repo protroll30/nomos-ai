@@ -5,6 +5,8 @@ import os
 import threading
 from pathlib import Path
 
+from app.code_intel import AST_PROMPT_LEAD
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 SYSTEM_TEXT = (
@@ -115,10 +117,7 @@ def status_snapshot() -> dict:
 def build_messages(code: str, *, ast_summary: str | None = None) -> list[dict]:
     parts: list[str] = []
     if ast_summary:
-        parts.append(
-            "Deterministic context from CPython's ast module (heuristic FastAPI-style "
-            "route detection). Use as structured hints; dynamic routes may be missing.\n\n"
-        )
+        parts.append(AST_PROMPT_LEAD)
         parts.append(ast_summary.strip())
         parts.append("\n\n")
     parts.append("Audit the following code for EU AI Act compliance:\n\n")

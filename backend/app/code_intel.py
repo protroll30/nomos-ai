@@ -1,6 +1,17 @@
 from __future__ import annotations
 
 import ast
+import re
+
+AST_PROMPT_LEAD = (
+    "Deterministic context from CPython's ast module (heuristic FastAPI-style "
+    "route detection). Use as structured hints; dynamic routes may be missing.\n\n"
+)
+
+_USER_CODE_FENCE = re.compile(
+    r"```(?:python)?\s*\n(.*?)```",
+    re.DOTALL | re.IGNORECASE,
+)
 
 _HTTP_METHOD_ATTRS = frozenset(
     {
@@ -192,3 +203,28 @@ def format_scan_for_prompt(scan: dict) -> str:
         if len(im) > 60:
             lines.append(f"  ... and {len(im) - 60} more")
     return "\n".join(lines)
+
+
+def extract_python_fence(text: str) -> str | None:
+    m = _USER_CODE_FENCE.search(text)
+    if not m:
+        return None
+    return m.group(1).strip()
+
+
+def augment_messages_ast(messages: list[dict]) -> list[dict]:
+    out: list[dict] = []
+    for msg in messages:
+        if msg.get("role") != "user":
+            out.append(dict(msg))
+            continue
+        content = msg.get("content") or ""
+        code = extract_python_fence(content)
+        if not code:
+            out.append(dict(msg))
+            continue
+        scan = scan_module(code, "snippet.py")
+        summary = format_scan_for_prompt(scan)
+        merged = f"{AST_PROMPT_LEAD}{summary}\n\n{content}"
+        out.append({**msg, "content": merged})
+    return out

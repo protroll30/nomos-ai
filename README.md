@@ -61,6 +61,8 @@ python scripts/train_unsloth_sft.py \
 
 Artifacts go under **`outputs/<run>/`** (adapter + tokenizer; ignored by git). Adjust hyperparameters as needed.
 
+**AST during SFT:** Before `apply_chat_template`, each **user** turn that contains a Markdown-style Python code fence is augmented with the same **ast summary** text as the API (`backend/app/code_intel.py`: routes/imports/defs heuristics). This aligns training with inference when you use `include_ast_summary` on `/v1/audit`. Disable with **`--no-ast-augment`** on the trainer (and use the same flag on eval for adapters trained that way).
+
 ## Evaluating the adapter
 
 **1. Generate predictions** (default backend: `hf`). On Linux/macOS use **forward slashes** in paths:
@@ -70,6 +72,8 @@ python scripts/eval_unsloth_lora.py \
   --adapter-dir outputs/nomos-lora-e2 \
   --dump-preds outputs/preds_eval.jsonl
 ```
+
+By default, eval **prepends the same ast context** as training. If the adapter was trained with **`--no-ast-augment`**, pass **`--no-ast-augment`** here too.
 
 Optional: `--backend unsloth` uses Unsloth’s loader (can hit `transformers` 5.x + fast-generate bugs on some setups).
 

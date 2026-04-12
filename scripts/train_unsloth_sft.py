@@ -12,6 +12,15 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def _ensure_backend_on_path() -> None:
+    import sys
+
+    b = ROOT / "backend"
+    s = str(b.resolve())
+    if s not in sys.path:
+        sys.path.insert(0, s)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="Unsloth LoRA fine-tuning for Nomos JSONL.")
     ap.add_argument("--train", type=Path, default=ROOT / "data" / "train.jsonl")
@@ -29,6 +38,11 @@ def main() -> int:
     ap.add_argument("--lr", type=float, default=2e-4)
     ap.add_argument("--lora-r", type=int, default=16)
     ap.add_argument("--lora-alpha", type=int, default=16)
+    ap.add_argument(
+        "--no-ast-augment",
+        action="store_true",
+        help="Do not prepend CPython ast summaries to user turns (disables alignment with inference AST context).",
+    )
     args = ap.parse_args()
 
     import torch
@@ -80,15 +94,24 @@ def main() -> int:
         loftq_config=None,
     )
 
+    use_ast_augment = not args.no_ast_augment
+    if use_ast_augment:
+        _ensure_backend_on_path()
+        from app.code_intel import augment_messages_ast
+
     def formatting_prompts_func(examples: dict) -> dict:
-        texts = [
-            tokenizer.apply_chat_template(
-                convo,
-                tokenize=False,
-                add_generation_prompt=False,
+        texts = []
+        for convo in examples["messages"]:
+            convo_in = (
+                augment_messages_ast(convo) if use_ast_augment else convo
             )
-            for convo in examples["messages"]
-        ]
+            texts.append(
+                tokenizer.apply_chat_template(
+                    convo_in,
+                    tokenize=False,
+                    add_generation_prompt=False,
+                )
+            )
         return {"text": texts}
 
     train_ds = train_ds.map(
@@ -117,7 +140,8 @@ def main() -> int:
     print(
         f"train_rows={n_train} global_batch={global_batch} "
         f"steps_per_epoch≈{steps_per_epoch} total_steps≈{total_update_steps} "
-        f"warmup_steps={warmup_steps} save/eval_every={step_interval}",
+        f"warmup_steps={warmup_steps} save/eval_every={step_interval} "
+        f"ast_augment={use_ast_augment}",
         flush=True,
     )
 

@@ -9,6 +9,15 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def _ensure_backend_on_path() -> None:
+    import sys
+
+    b = ROOT / "backend"
+    s = str(b.resolve())
+    if s not in sys.path:
+        sys.path.insert(0, s)
+
+
 def _parse_obj(s: str) -> dict | None:
     s = s.strip()
     if not s:
@@ -100,6 +109,11 @@ def main() -> int:
         default="hf",
         help="hf: Transformers+PEFT (stable with transformers 5.x). unsloth: FastLanguageModel path.",
     )
+    ap.add_argument(
+        "--no-ast-augment",
+        action="store_true",
+        help="Skip ast prepended context (use if the adapter was trained with --no-ast-augment).",
+    )
     args = ap.parse_args()
 
     import torch
@@ -125,6 +139,11 @@ def main() -> int:
             adapter_dir=args.adapter_dir,
             max_seq_length=args.max_seq_length,
         )
+
+    use_ast_augment = not args.no_ast_augment
+    if use_ast_augment:
+        _ensure_backend_on_path()
+        from app.code_intel import augment_messages_ast
 
     rows: list[dict] = []
     with args.eval.open(encoding="utf-8") as f:
@@ -155,6 +174,8 @@ def main() -> int:
             return 1
         gold_text = msgs[-1].get("content") or ""
         prompt_msgs = msgs[:-1]
+        if use_ast_augment:
+            prompt_msgs = augment_messages_ast(prompt_msgs)
         enc = tokenizer.apply_chat_template(
             prompt_msgs,
             tokenize=True,
