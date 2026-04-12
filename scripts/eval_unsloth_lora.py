@@ -1,4 +1,4 @@
-"""Generate on eval JSONL with a trained Unsloth LoRA adapter; report JSON + field overlap."""
+"""Generate on eval JSONL with a trained LoRA adapter; report JSON + field overlap."""
 
 from __future__ import annotations
 
@@ -18,6 +18,58 @@ def _parse_obj(s: str) -> dict | None:
     except json.JSONDecodeError:
         return None
     return v if isinstance(v, dict) else None
+
+
+def _load_model_hf(
+    *,
+    model_name: str,
+    adapter_dir: Path,
+):
+    import torch
+    from peft import PeftModel
+    from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
+
+    bnb = BitsAndBytesConfig(
+        load_in_4bit=True,
+        bnb_4bit_use_double_quant=True,
+        bnb_4bit_quant_type="nf4",
+        bnb_4bit_compute_dtype=torch.bfloat16,
+    )
+    model = AutoModelForCausalLM.from_pretrained(
+        model_name,
+        quantization_config=bnb,
+        device_map="auto",
+        trust_remote_code=True,
+    )
+    tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
+    if tokenizer.pad_token_id is None:
+        tokenizer.pad_token = tokenizer.eos_token
+    model = PeftModel.from_pretrained(model, str(adapter_dir))
+    model.eval()
+    return model, tokenizer
+
+
+def _load_model_unsloth(
+    *,
+    model_name: str,
+    adapter_dir: Path,
+    max_seq_length: int,
+):
+    import unsloth  # noqa: F401
+
+    import torch
+    from peft import PeftModel
+    from unsloth import FastLanguageModel
+
+    model, tokenizer = FastLanguageModel.from_pretrained(
+        model_name=model_name,
+        max_seq_length=max_seq_length,
+        dtype=None,
+        load_in_4bit=True,
+    )
+    model = PeftModel.from_pretrained(model, str(adapter_dir))
+    FastLanguageModel.for_inference(model)
+    return model, tokenizer
 
 
 def main() -> int:
@@ -42,11 +94,15 @@ def main() -> int:
         default=None,
         help="Write JSONL with messages + pred_assistant per row (for eval_llm_judge.py).",
     )
+    ap.add_argument(
+        "--backend",
+        choices=("hf", "unsloth"),
+        default="hf",
+        help="hf: Transformers+PEFT (stable with transformers 5.x). unsloth: FastLanguageModel path.",
+    )
     args = ap.parse_args()
 
     import torch
-    from peft import PeftModel
-    from unsloth import FastLanguageModel
 
     if not torch.cuda.is_available():
         print("CUDA required.", file=__import__("sys").stderr)
@@ -58,14 +114,17 @@ def main() -> int:
         print(f"missing adapter in {args.adapter_dir}", file=__import__("sys").stderr)
         return 1
 
-    model, tokenizer = FastLanguageModel.from_pretrained(
-        model_name=args.model_name,
-        max_seq_length=args.max_seq_length,
-        dtype=None,
-        load_in_4bit=True,
-    )
-    model = PeftModel.from_pretrained(model, str(args.adapter_dir))
-    FastLanguageModel.for_inference(model)
+    if args.backend == "hf":
+        model, tokenizer = _load_model_hf(
+            model_name=args.model_name,
+            adapter_dir=args.adapter_dir,
+        )
+    else:
+        model, tokenizer = _load_model_unsloth(
+            model_name=args.model_name,
+            adapter_dir=args.adapter_dir,
+            max_seq_length=args.max_seq_length,
+        )
 
     rows: list[dict] = []
     with args.eval.open(encoding="utf-8") as f:
@@ -102,13 +161,16 @@ def main() -> int:
             add_generation_prompt=True,
             return_tensors="pt",
         ).to(device)
+        attention_mask = torch.ones_like(input_ids, dtype=torch.long, device=device)
 
         with torch.inference_mode():
             out = model.generate(
                 input_ids=input_ids,
+                attention_mask=attention_mask,
                 max_new_tokens=args.max_new_tokens,
                 do_sample=False,
                 pad_token_id=pad_id,
+                use_cache=True,
             )
         gen_ids = out[0, input_ids.shape[1] :]
         pred_text = tokenizer.decode(gen_ids, skip_special_tokens=True).strip()
