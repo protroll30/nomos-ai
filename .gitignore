@@ -21,6 +21,7 @@ build/
 .env
 .env.*
 !.env.example
+dashboard/.env.local
 
 database/lancedb_data/
 

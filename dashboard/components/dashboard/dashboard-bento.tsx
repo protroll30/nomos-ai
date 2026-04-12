@@ -1,5 +1,6 @@
 "use client";
 
+import { AuditPlayground } from "@/components/dashboard/audit-playground";
 import { BayesianChartPanel } from "@/components/dashboard/bayesian-chart-panel";
 import { CotFeedPanel } from "@/components/dashboard/cot-feed-panel";
 import { DatasetHealthCard } from "@/components/dashboard/dataset-health-card";
@@ -19,6 +20,9 @@ export function DashboardBento({
       data-dashboard-root
       className="nomos-bento-grid min-h-screen p-2 md:min-h-0 md:p-3"
     >
+      <div className="col-span-12">
+        <AuditPlayground />
+      </div>
       <div className="col-span-12">
         <DatasetHealthCard legalChunksTotal={datasetHealth.legalChunksTotal} />
       </div>
