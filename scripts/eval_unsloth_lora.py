@@ -155,13 +155,23 @@ def main() -> int:
             return 1
         gold_text = msgs[-1].get("content") or ""
         prompt_msgs = msgs[:-1]
-        input_ids = tokenizer.apply_chat_template(
+        enc = tokenizer.apply_chat_template(
             prompt_msgs,
             tokenize=True,
             add_generation_prompt=True,
             return_tensors="pt",
-        ).to(device)
-        attention_mask = torch.ones_like(input_ids, dtype=torch.long, device=device)
+        )
+        if isinstance(enc, torch.Tensor):
+            input_ids = enc.to(device)
+            attention_mask = torch.ones_like(input_ids, dtype=torch.long, device=device)
+        else:
+            input_ids = enc["input_ids"].to(device)
+            am = enc.get("attention_mask")
+            attention_mask = (
+                am.to(device)
+                if am is not None
+                else torch.ones_like(input_ids, dtype=torch.long, device=device)
+            )
 
         with torch.inference_mode():
             out = model.generate(
