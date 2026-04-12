@@ -74,15 +74,20 @@ def _call_openai_judge(*, model: str, user_text: str) -> dict | None:
         print("OPENAI_API_KEY is not set", file=sys.stderr)
         return None
     client = OpenAI()
-    resp = client.chat.completions.create(
-        model=model,
-        temperature=0,
-        response_format={"type": "json_object"},
-        messages=[
+    req: dict = {
+        "model": model,
+        "response_format": {"type": "json_object"},
+        "messages": [
             {"role": "system", "content": JUDGE_SYSTEM},
             {"role": "user", "content": user_text},
         ],
-    )
+    }
+    raw_temp = os.environ.get("OPENAI_JUDGE_TEMPERATURE")
+    if raw_temp is not None:
+        req["temperature"] = float(raw_temp)
+    elif not model.lower().startswith("gpt-5"):
+        req["temperature"] = 0
+    resp = client.chat.completions.create(**req)
     content = resp.choices[0].message.content
     if not content:
         return None
@@ -174,7 +179,7 @@ def main() -> int:
         return 1
 
     if args.provider == "openai":
-        model = args.model or os.environ.get("OPENAI_JUDGE_MODEL") or "gpt-4o-mini"
+        model = args.model or os.environ.get("OPENAI_JUDGE_MODEL") or "gpt-4o"
         judge_fn = lambda t: _call_openai_judge(model=model, user_text=t)
     else:
         model = args.model or os.environ.get("ANTHROPIC_JUDGE_MODEL") or "claude-3-5-haiku-20241022"
