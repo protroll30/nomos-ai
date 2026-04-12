@@ -33,14 +33,19 @@ def _model_name() -> str:
     )
 
 
+def _use_lora() -> bool:
+    v = os.environ.get("NOMOS_USE_LORA", "1").strip().lower()
+    return v not in ("0", "false", "no", "off")
+
+
 def _load() -> None:
     global _model, _tokenizer, _load_error
     import torch
-    from peft import PeftModel
     from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 
     adapter = _adapter_dir()
-    if not (adapter / "adapter_config.json").is_file():
+    use_lora = _use_lora()
+    if use_lora and not (adapter / "adapter_config.json").is_file():
         _load_error = f"No LoRA adapter at {adapter} (expected adapter_config.json)."
         return
 
@@ -64,7 +69,10 @@ def _load() -> None:
         tokenizer = AutoTokenizer.from_pretrained(_model_name(), trust_remote_code=True)
         if tokenizer.pad_token_id is None:
             tokenizer.pad_token = tokenizer.eos_token
-        model = PeftModel.from_pretrained(model, str(adapter))
+        if use_lora:
+            from peft import PeftModel
+
+            model = PeftModel.from_pretrained(model, str(adapter))
         model.eval()
         _model = model
         _tokenizer = tokenizer
@@ -98,23 +106,36 @@ def status_snapshot() -> dict:
     return {
         "adapter_dir": str(_adapter_dir()),
         "model_name": _model_name(),
+        "use_lora": _use_lora(),
         "inference_ready": inference_ready(),
         "load_error": last_load_error(),
     }
 
 
-def build_messages(code: str) -> list[dict]:
-    user = (
-        "Audit the following code for EU AI Act compliance:\n\n"
-        f"```python\n{code.strip()}\n```"
-    )
+def build_messages(code: str, *, ast_summary: str | None = None) -> list[dict]:
+    parts: list[str] = []
+    if ast_summary:
+        parts.append(
+            "Deterministic context from CPython's ast module (heuristic FastAPI-style "
+            "route detection). Use as structured hints; dynamic routes may be missing.\n\n"
+        )
+        parts.append(ast_summary.strip())
+        parts.append("\n\n")
+    parts.append("Audit the following code for EU AI Act compliance:\n\n")
+    parts.append(f"```python\n{code.strip()}\n```")
+    user = "".join(parts)
     return [
         {"role": "system", "content": SYSTEM_TEXT},
         {"role": "user", "content": user},
     ]
 
 
-def generate_audit(code: str, *, max_new_tokens: int = 1024) -> tuple[str, dict | None, str | None]:
+def generate_audit(
+    code: str,
+    *,
+    max_new_tokens: int = 1024,
+    ast_summary: str | None = None,
+) -> tuple[str, dict | None, str | None]:
     err = ensure_loaded()
     if err:
         raise RuntimeError(err)
@@ -122,7 +143,7 @@ def generate_audit(code: str, *, max_new_tokens: int = 1024) -> tuple[str, dict 
 
     import torch
 
-    msgs = build_messages(code)
+    msgs = build_messages(code, ast_summary=ast_summary)
     enc = _tokenizer.apply_chat_template(
         msgs,
         tokenize=True,

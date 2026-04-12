@@ -10,7 +10,7 @@ Proof-of-concept pipeline for **instruction-tuning a small auditor-style model**
 - **`scripts/eval_llm_judge.py`**: Optional **LLM-as-judge** (OpenAI or Anthropic) on dumped predictions; prints aggregate scores and verdict counts.
 - **`scripts/prepare_sft_data.py`**: Builds `train.jsonl` / `eval.jsonl` from `data/synthetic_all_rows.json` when you generate that file locally (large synthetic outputs are gitignored by default).
 - **`scripts/verify_unsloth_env.py`**: Quick import/CUDA check before training.
-- **`backend/`**: FastAPI service with **`POST /v1/audit`** to run the LoRA on pasted Python (GPU required on the machine that runs the API).
+- **`backend/`**: FastAPI service with **`POST /v1/audit`** (GPU on the API host) plus **`POST /v1/codebase/ast`** for **CPython `ast`** scans of a multi-file map (routes/imports/defs heuristics).
 - **`dashboard/`**: Next.js UI with a **Live audit** panel that calls that API.
 
 ## Requirements
@@ -39,6 +39,7 @@ pip install -r requirements.txt
 | `ANTHROPIC_API_KEY` | `eval_llm_judge.py` with `--provider anthropic` |
 | `ANTHROPIC_JUDGE_MODEL` | Judge model id when using Anthropic |
 | `NOMOS_ADAPTER_DIR` | Absolute path to LoRA adapter dir (default: `<repo>/outputs/nomos-lora`) |
+| `NOMOS_USE_LORA` | If `0` / `false` / `no`, load **base model only** (no `adapter_config.json`; fine for PoC) |
 | `NOMOS_MODEL_NAME` | Base HF model id (default: Unsloth Llama 3.1 8B 4-bit) |
 | `NOMOS_PRELOAD_MODEL` | If `1`, load weights at API startup (otherwise first request pays load cost) |
 | `NOMOS_MAX_NEW_TOKENS` | Default generation cap for `/v1/audit` |
@@ -123,7 +124,10 @@ Open the app, use **Live audit (LoRA)** — paste Python, **Run audit**. Respons
 |--------|------|---------|
 | `GET` | `/health` | Liveness |
 | `GET` | `/v1/audit/status` | Adapter path, load errors, whether weights are in memory |
-| `POST` | `/v1/audit` | Body: `{"code": "..." }` → `raw_text`, `parsed`, `parse_error` |
+| `POST` | `/v1/audit` | Model audit: `{"code": "..."}` **or** `{"files": {"src/app.py": "..."}}` (mutually exclusive). Response adds optional `ast_summary` when AST context was prepended to the prompt. |
+| `POST` | `/v1/codebase/ast` | No model: `{"files": { "path": "source" }}` → parse trees summarized per file, merged routes/imports (FastAPI-style decorators are detected heuristically). |
+
+**AST behavior:** For `POST /v1/audit`, if you send **`files`**, an `ast` summary is **prepended to the user message by default** (set `include_ast_summary: false` to disable). For a single **`code`** string only, AST is **off** by default unless you set `include_ast_summary: true`. Limits: 64 files, 250k characters total, paths normalized with `/`, `..` rejected.
 
 ## Before pushing to GitHub
 
