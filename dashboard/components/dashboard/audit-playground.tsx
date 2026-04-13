@@ -15,8 +15,21 @@ const DEFAULT_SAMPLE = `@app.post("/predict")
 async def predict(features: list[float]):
     return {"score": model.predict(features)}`;
 
-const MAX_FILES = 64;
-const MAX_TOTAL_CHARS = 250_000;
+const MAX_FILES = 200;
+const MAX_TOTAL_CHARS = 750_000;
+
+function formatApiDetail(data: unknown): string {
+  if (!data || typeof data !== "object" || !("detail" in data)) {
+    return "";
+  }
+  const d = (data as { detail: unknown }).detail;
+  if (typeof d === "string") return d;
+  try {
+    return JSON.stringify(d);
+  } catch {
+    return String(d);
+  }
+}
 
 type AuditApiResponse = {
   raw_text: string;
@@ -36,6 +49,12 @@ type StatusResponse = {
 
 type AuditBackendMode = "openai" | "hf";
 
+export type AuditCompletePayload = {
+  parsed: Record<string, unknown>;
+  kind: "snippet" | "files";
+  fileCount: number;
+};
+
 function apiBase(): string {
   return (process.env.NEXT_PUBLIC_NOMOS_API_URL ?? "").replace(/\/$/, "");
 }
@@ -47,26 +66,54 @@ function defaultAuditBackend(): AuditBackendMode {
   return "openai";
 }
 
-async function fileListToFilesMap(files: FileList): Promise<Record<string, string>> {
-  const out: Record<string, string> = {};
-  const list = Array.from(files);
-  if (list.length > MAX_FILES) {
-    throw new Error(`Too many files (max ${MAX_FILES}).`);
+async function filesToAuditMap(files: File[]): Promise<Record<string, string>> {
+  const list = files;
+  if (list.length === 0) {
+    throw new Error("No files selected.");
   }
-  let total = 0;
-  for (const f of list) {
-    const rel = (f as File & { webkitRelativePath?: string }).webkitRelativePath || f.name;
-    const path = rel.replace(/\\/g, "/").trim();
-    if (!path) continue;
-    const text = await f.text();
-    total += path.length + text.length;
-    if (total > MAX_TOTAL_CHARS) {
-      throw new Error(`Total size exceeds ${MAX_TOTAL_CHARS} characters.`);
+  if (list.length > MAX_FILES) {
+    throw new Error(
+      `Too many entries (${list.length}). Max ${MAX_FILES} per audit — pick a subfolder (e.g. src) or fewer files.`
+    );
+  }
+
+  const pathCounts = new Map<string, number>();
+  const uniquePath = (basePath: string): string => {
+    const n = pathCounts.get(basePath) ?? 0;
+    pathCounts.set(basePath, n + 1);
+    if (n === 0) return basePath;
+    const dot = basePath.lastIndexOf(".");
+    if (dot > 0) {
+      return `${basePath.slice(0, dot)}__${n + 1}${basePath.slice(dot)}`;
     }
-    out[path] = text;
+    return `${basePath}__${n + 1}`;
+  };
+
+  const rows = await Promise.all(
+    list.map(async (f) => {
+      const rel = (f as File & { webkitRelativePath?: string }).webkitRelativePath || f.name;
+      const raw = rel.replace(/\\/g, "/").trim();
+      if (!raw) return null;
+      const path = uniquePath(raw);
+      const text = await f.text();
+      return { path, text };
+    })
+  );
+
+  const out: Record<string, string> = {};
+  let total = 0;
+  for (const row of rows) {
+    if (!row) continue;
+    total += row.path.length + row.text.length;
+    if (total > MAX_TOTAL_CHARS) {
+      throw new Error(
+        `Total size exceeds ${MAX_TOTAL_CHARS.toLocaleString()} characters — choose a smaller folder.`
+      );
+    }
+    out[row.path] = row.text;
   }
   if (!Object.keys(out).length) {
-    throw new Error("No files selected.");
+    throw new Error("No usable file paths (empty names).");
   }
   if (!Object.values(out).some((s) => s.trim())) {
     throw new Error("All selected files are empty.");
@@ -74,10 +121,21 @@ async function fileListToFilesMap(files: FileList): Promise<Record<string, strin
   return out;
 }
 
-export function AuditPlayground() {
+type AuditPlaygroundProps = {
+  onAuditComplete?: (payload: AuditCompletePayload) => void;
+};
+
+export function AuditPlayground({ onAuditComplete }: AuditPlaygroundProps) {
   const base = apiBase();
   const snippetInputRef = useRef<HTMLInputElement>(null);
-  const folderInputRef = useRef<HTMLInputElement>(null);
+  const folderInputRef = useRef<HTMLInputElement | null>(null);
+  const setFolderInputEl = useCallback((el: HTMLInputElement | null) => {
+    folderInputRef.current = el;
+    if (el) {
+      el.setAttribute("webkitdirectory", "");
+      el.setAttribute("mozdirectory", "");
+    }
+  }, []);
   const [sourceMode, setSourceMode] = useState<"snippet" | "files">("snippet");
   const [auditBackend, setAuditBackend] = useState<AuditBackendMode>(defaultAuditBackend);
   const [code, setCode] = useState(DEFAULT_SAMPLE);
@@ -86,6 +144,7 @@ export function AuditPlayground() {
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<AuditApiResponse | null>(null);
   const [status, setStatus] = useState<StatusResponse | null>(null);
+  const [readingFiles, setReadingFiles] = useState(false);
 
   const fetchStatusFor = useCallback(async (mode: AuditBackendMode) => {
     if (!base) return;
@@ -106,15 +165,19 @@ export function AuditPlayground() {
   }, [auditBackend, base, fetchStatusFor]);
 
   async function onPickFiles(e: React.ChangeEvent<HTMLInputElement>) {
-    const fl = e.target.files;
-    e.target.value = "";
-    if (!fl?.length) return;
+    const input = e.target;
+    const picked = Array.from(input.files ?? []);
+    if (!picked.length) return;
+    setReadingFiles(true);
+    setError(null);
     try {
-      setFilesMap(await fileListToFilesMap(fl));
-      setError(null);
+      setFilesMap(await filesToAuditMap(picked));
     } catch (err) {
       setFilesMap(null);
       setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setReadingFiles(false);
+      input.value = "";
     }
   }
 
@@ -142,13 +205,18 @@ export function AuditPlayground() {
         | AuditApiResponse
         | { detail?: string };
       if (!r.ok) {
-        const detail =
-          typeof data === "object" && data && "detail" in data
-            ? String((data as { detail: unknown }).detail)
-            : r.statusText;
+        const detail = formatApiDetail(data) || r.statusText;
         throw new Error(detail || `HTTP ${r.status}`);
       }
-      setResult(data as AuditApiResponse);
+      const res = data as AuditApiResponse;
+      setResult(res);
+      if (onAuditComplete && res.parsed) {
+        onAuditComplete({
+          parsed: res.parsed as Record<string, unknown>,
+          kind: sourceMode === "files" ? "files" : "snippet",
+          fileCount: filesMap ? Object.keys(filesMap).length : 0,
+        });
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -309,11 +377,10 @@ export function AuditPlayground() {
               onChange={(e) => void onPickFiles(e)}
             />
             <input
-              ref={folderInputRef}
+              ref={setFolderInputEl}
               type="file"
               multiple
               className="hidden"
-              {...({ webkitdirectory: "" } as Record<string, string>)}
               onChange={(e) => void onPickFiles(e)}
             />
             <div className="flex flex-wrap gap-2">
@@ -329,7 +396,11 @@ export function AuditPlayground() {
                 type="button"
                 variant="outline"
                 size="sm"
-                onClick={() => folderInputRef.current?.click()}
+                onClick={() => {
+                  folderInputRef.current?.setAttribute("webkitdirectory", "");
+                  folderInputRef.current?.setAttribute("mozdirectory", "");
+                  folderInputRef.current?.click();
+                }}
               >
                 Choose folder
               </Button>
@@ -345,26 +416,35 @@ export function AuditPlayground() {
               ) : null}
             </div>
             <p className="font-mono text-[11px] text-muted-foreground">
-              Up to {MAX_FILES} paths, {MAX_TOTAL_CHARS.toLocaleString()} characters total. Relative
-              paths are preserved when you pick a folder.
+              Up to {MAX_FILES} files and {MAX_TOTAL_CHARS.toLocaleString()} characters total (whole
+              repos with <span className="text-foreground">node_modules</span> usually exceed that — pick{" "}
+              <span className="text-foreground">src</span> or similar). Folder picks can take a few
+              seconds before the list appears.
             </p>
-            {filesMap ? (
-              <ScrollArea className="h-24 w-full rounded border border-border bg-background p-2">
+            {readingFiles ? (
+              <p className="font-mono text-[11px] text-amber-600 dark:text-amber-400">
+                Reading files from disk…
+              </p>
+            ) : null}
+            {filesMap && !readingFiles ? (
+              <div className="max-h-40 min-h-[6rem] w-full overflow-y-auto rounded border border-border bg-background p-2">
+                <p className="mb-1 font-mono text-[10px] font-semibold text-muted-foreground">
+                  {Object.keys(filesMap).length} file(s)
+                </p>
                 <ul className="font-mono text-[10px] text-foreground">
                   {Object.keys(filesMap)
                     .sort()
                     .map((p) => (
-                      <li key={p} className="truncate" title={p}>
+                      <li key={p} className="break-all py-0.5" title={p}>
                         {p}
                       </li>
                     ))}
                 </ul>
-              </ScrollArea>
-            ) : (
-              <p className="font-mono text-[11px] text-muted-foreground">
-                No files selected.
-              </p>
-            )}
+              </div>
+            ) : null}
+            {!filesMap && !readingFiles ? (
+              <p className="font-mono text-[11px] text-muted-foreground">No files selected.</p>
+            ) : null}
           </div>
         )}
 
@@ -373,7 +453,7 @@ export function AuditPlayground() {
             type="button"
             variant="default"
             size="sm"
-            disabled={loading || !base || !canRun}
+            disabled={loading || readingFiles || !base || !canRun}
             onClick={() => void runAudit()}
           >
             {loading ? "Running…" : "Run audit"}

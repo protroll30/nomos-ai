@@ -9,6 +9,7 @@ import {
 import { useMemo } from "react";
 
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import {
   Card,
   CardContent,
@@ -112,9 +113,13 @@ const columns: ColumnDef<TraceabilityRow>[] = [
 export function TraceabilityMatrix({
   traceRows,
   sourcePath,
+  variant = "golden",
+  onResetLive,
 }: {
   traceRows: TraceabilityRow[];
   sourcePath: string;
+  variant?: "golden" | "live";
+  onResetLive?: () => void;
 }) {
   const data = useMemo(() => traceRows, [traceRows]);
   const table = useReactTable({
@@ -126,9 +131,23 @@ export function TraceabilityMatrix({
   return (
     <Card className="flex h-full min-h-0 flex-col gap-0 rounded-panel border-hairline border-border bg-surface py-2 shadow-none ring-0">
       <CardHeader className="space-y-0 border-b border-border px-3 py-2 [.border-b]:pb-2">
-        <CardTitle className="font-mono text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">
-          Traceability matrix · ground truth
-        </CardTitle>
+        <div className="flex flex-wrap items-start justify-between gap-2">
+          <CardTitle className="font-mono text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">
+            Traceability matrix ·{" "}
+            {variant === "live" ? "last audit" : "golden set"}
+          </CardTitle>
+          {variant === "live" && onResetLive ? (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-7 font-mono text-[10px]"
+              onClick={onResetLive}
+            >
+              Golden set
+            </Button>
+          ) : null}
+        </div>
         <p className="pt-0.5 font-mono text-[10px] leading-tight text-muted-foreground">
           {sourcePath}
         </p>

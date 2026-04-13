@@ -25,8 +25,10 @@ import {
 
 export function BayesianChartPanel({
   posteriors,
+  dataSourceLabel = "golden_set.json",
 }: {
   posteriors: PosteriorSeries[];
+  dataSourceLabel?: string;
 }) {
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
@@ -53,7 +55,7 @@ export function BayesianChartPanel({
     <Card className="flex h-full min-h-0 flex-col gap-0 rounded-panel border-hairline border-border bg-surface py-2 shadow-none ring-0">
       <CardHeader className="space-y-0 border-b border-border px-3 py-2 [.border-b]:pb-2">
         <CardTitle className="font-mono text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">
-          Posterior density · E[p] from golden_set.json
+          Posterior density · E[p] from {dataSourceLabel}
         </CardTitle>
       </CardHeader>
       <CardContent className="min-h-0 flex-1 px-2 pb-2 pt-1">

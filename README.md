@@ -136,7 +136,7 @@ Open the app, use **Live audit (LoRA)** — paste Python, **Run audit**. Respons
 | `POST` | `/v1/audit` | Model audit: `{"code": "..."}` **or** `{"files": {...}}` (mutually exclusive). Optional **`audit_backend`**: `openai` or `hf` in the JSON body (or query/header). Response adds optional `ast_summary` when AST context was prepended to the prompt. |
 | `POST` | `/v1/codebase/ast` | No model: `{"files": { "path": "source" }}` → parse trees summarized per file, merged routes/imports (FastAPI-style decorators are detected heuristically). |
 
-**AST behavior:** For `POST /v1/audit`, if you send **`files`**, an `ast` summary is **prepended to the user message by default** (set `include_ast_summary: false` to disable). For a single **`code`** string only, AST is **off** by default unless you set `include_ast_summary: true`. Limits: 64 files, 250k characters total, paths normalized with `/`, `..` rejected.
+**AST behavior:** For `POST /v1/audit`, if you send **`files`**, an `ast` summary is **prepended to the user message by default** (set `include_ast_summary: false` to disable). For a single **`code`** string only, AST is **off** by default unless you set `include_ast_summary: true`. Limits: 200 files, 750k characters total, paths normalized with `/`, `..` rejected.
 
 ## Before pushing to GitHub
 
