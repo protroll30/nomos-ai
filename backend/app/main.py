@@ -1,4 +1,4 @@
-"""Nomos FastAPI entrypoint: health + LoRA audit inference for the dashboard."""
+"""Nomos FastAPI entrypoint: health + audit inference (local HF or OpenAI) for the dashboard."""
 
 from __future__ import annotations
 

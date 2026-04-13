@@ -36,8 +36,70 @@ def _model_name() -> str:
 
 
 def _use_lora() -> bool:
-    v = os.environ.get("NOMOS_USE_LORA", "1").strip().lower()
+    v = os.environ.get("NOMOS_USE_LORA", "0").strip().lower()
     return v not in ("0", "false", "no", "off")
+
+
+def _audit_backend() -> str:
+    v = os.environ.get("NOMOS_AUDIT_BACKEND", "hf").strip().lower()
+    if v in ("openai", "oai"):
+        return "openai"
+    return "hf"
+
+
+def _openai_model() -> str:
+    return os.environ.get("NOMOS_OPENAI_MODEL", "gpt-4o-mini").strip() or "gpt-4o-mini"
+
+
+def _parse_audit_output(text: str) -> tuple[dict | None, str | None]:
+    parse_err: str | None = None
+    parsed: dict | None = None
+    try:
+        candidate = text.strip()
+        if candidate.startswith("```"):
+            lines = candidate.split("\n")
+            if lines and lines[0].startswith("```"):
+                lines = lines[1:]
+            if lines and lines[-1].strip() == "```":
+                lines = lines[:-1]
+            candidate = "\n".join(lines).strip()
+        obj = json.loads(candidate)
+        parsed = obj if isinstance(obj, dict) else None
+        if parsed is None:
+            parse_err = "Top-level JSON is not an object."
+    except json.JSONDecodeError as e:
+        parse_err = str(e)
+    return parsed, parse_err
+
+
+def _generate_openai(
+    code: str,
+    *,
+    max_new_tokens: int,
+    ast_summary: str | None,
+) -> tuple[str, dict | None, str | None]:
+    from openai import OpenAI
+
+    api_key = os.environ.get("OPENAI_API_KEY", "").strip()
+    if not api_key:
+        raise RuntimeError("OPENAI_API_KEY is not set.")
+
+    client = OpenAI(api_key=api_key)
+    msgs = build_messages(code, ast_summary=ast_summary)
+    oai_msgs = [{"role": m["role"], "content": m["content"]} for m in msgs]
+    try:
+        resp = client.chat.completions.create(
+            model=_openai_model(),
+            messages=oai_msgs,
+            max_tokens=max_new_tokens,
+            temperature=0,
+        )
+    except Exception as e:
+        raise RuntimeError(f"OpenAI request failed: {e}") from e
+    choice = resp.choices[0].message.content
+    text = (choice or "").strip()
+    parsed, parse_err = _parse_audit_output(text)
+    return text, parsed, parse_err
 
 
 def _load() -> None:
@@ -87,6 +149,8 @@ def _load() -> None:
 
 def ensure_loaded() -> str | None:
     global _load_error
+    if _audit_backend() == "openai":
+        return None if os.environ.get("OPENAI_API_KEY", "").strip() else "OPENAI_API_KEY is not set."
     with _lock:
         if _model is not None and _tokenizer is not None:
             return None
@@ -97,6 +161,8 @@ def ensure_loaded() -> str | None:
 
 
 def inference_ready() -> bool:
+    if _audit_backend() == "openai":
+        return bool(os.environ.get("OPENAI_API_KEY", "").strip())
     return _model is not None and _tokenizer is not None
 
 
@@ -105,7 +171,18 @@ def last_load_error() -> str | None:
 
 
 def status_snapshot() -> dict:
+    if _audit_backend() == "openai":
+        key_ok = bool(os.environ.get("OPENAI_API_KEY", "").strip())
+        return {
+            "backend": "openai",
+            "adapter_dir": str(_adapter_dir()),
+            "model_name": _openai_model(),
+            "use_lora": False,
+            "inference_ready": key_ok,
+            "load_error": None if key_ok else "OPENAI_API_KEY is not set.",
+        }
     return {
+        "backend": "hf",
         "adapter_dir": str(_adapter_dir()),
         "model_name": _model_name(),
         "use_lora": _use_lora(),
@@ -135,6 +212,12 @@ def generate_audit(
     max_new_tokens: int = 1024,
     ast_summary: str | None = None,
 ) -> tuple[str, dict | None, str | None]:
+    if _audit_backend() == "openai":
+        err = ensure_loaded()
+        if err:
+            raise RuntimeError(err)
+        return _generate_openai(code, max_new_tokens=max_new_tokens, ast_summary=ast_summary)
+
     err = ensure_loaded()
     if err:
         raise RuntimeError(err)
@@ -176,23 +259,5 @@ def generate_audit(
         )
     gen_ids = out[0, input_ids.shape[1] :]
     text = _tokenizer.decode(gen_ids, skip_special_tokens=True).strip()
-
-    parse_err: str | None = None
-    parsed: dict | None = None
-    try:
-        candidate = text.strip()
-        if candidate.startswith("```"):
-            lines = candidate.split("\n")
-            if lines and lines[0].startswith("```"):
-                lines = lines[1:]
-            if lines and lines[-1].strip() == "```":
-                lines = lines[:-1]
-            candidate = "\n".join(lines).strip()
-        obj = json.loads(candidate)
-        parsed = obj if isinstance(obj, dict) else None
-        if parsed is None:
-            parse_err = "Top-level JSON is not an object."
-    except json.JSONDecodeError as e:
-        parse_err = str(e)
-
+    parsed, parse_err = _parse_audit_output(text)
     return text, parsed, parse_err

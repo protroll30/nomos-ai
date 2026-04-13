@@ -33,13 +33,15 @@ pip install -r requirements.txt
 | Variable | Used for |
 |----------|-----------|
 | `HF_TOKEN` | Hugging Face Hub (optional; rate limits / gated models) |
-| `OPENAI_API_KEY` | `eval_llm_judge.py` with `--provider openai` |
+| `OPENAI_API_KEY` | `eval_llm_judge.py` (`--provider openai`); **`NOMOS_AUDIT_BACKEND=openai`** for `/v1/audit` |
 | `OPENAI_JUDGE_MODEL` | Judge model id (default: `gpt-4o`) |
 | `OPENAI_JUDGE_TEMPERATURE` | Optional override (e.g. `gpt-4o` usually `0`) |
 | `ANTHROPIC_API_KEY` | `eval_llm_judge.py` with `--provider anthropic` |
 | `ANTHROPIC_JUDGE_MODEL` | Judge model id when using Anthropic |
+| `NOMOS_AUDIT_BACKEND` | `hf` (default): local GPU model. `openai`: Chat Completions via `OPENAI_API_KEY` (no GPU on API host). |
+| `NOMOS_OPENAI_MODEL` | OpenAI model id when `NOMOS_AUDIT_BACKEND=openai` (default: `gpt-4o-mini`) |
 | `NOMOS_ADAPTER_DIR` | Absolute path to LoRA adapter dir (default: `<repo>/outputs/nomos-lora`) |
-| `NOMOS_USE_LORA` | If `0` / `false` / `no`, load **base model only** (no `adapter_config.json`; fine for PoC) |
+| `NOMOS_USE_LORA` | Default **`0`**: **base model only** (no adapter; typical PoC). Set **`1`** after training to merge the LoRA adapter from `NOMOS_ADAPTER_DIR`. |
 | `NOMOS_MODEL_NAME` | Base HF model id (default: Unsloth Llama 3.1 8B 4-bit) |
 | `NOMOS_PRELOAD_MODEL` | If `1`, load weights at API startup (otherwise first request pays load cost) |
 | `NOMOS_MAX_NEW_TOKENS` | Default generation cap for `/v1/audit` |
