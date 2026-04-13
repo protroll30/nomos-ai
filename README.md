@@ -10,7 +10,7 @@ Proof-of-concept pipeline for **instruction-tuning a small auditor-style model**
 - **`scripts/eval_llm_judge.py`**: Optional **LLM-as-judge** (OpenAI or Anthropic) on dumped predictions; prints aggregate scores and verdict counts.
 - **`scripts/prepare_sft_data.py`**: Builds `train.jsonl` / `eval.jsonl` from `data/synthetic_all_rows.json` when you generate that file locally (large synthetic outputs are gitignored by default).
 - **`scripts/verify_unsloth_env.py`**: Quick import/CUDA check before training.
-- **`backend/`**: FastAPI service with **`POST /v1/audit`** (GPU on the API host) plus **`POST /v1/codebase/ast`** for **CPython `ast`** scans of a multi-file map (routes/imports/defs heuristics).
+- **`backend/`**: FastAPI service with **`POST /v1/audit`** (OpenAI API or local GPU via env / header) plus **`POST /v1/codebase/ast`** for **CPython `ast`** scans of a multi-file map (routes/imports/defs heuristics).
 - **`dashboard/`**: Next.js UI with a **Live audit** panel that calls that API.
 
 ## Requirements
@@ -38,7 +38,9 @@ pip install -r requirements.txt
 | `OPENAI_JUDGE_TEMPERATURE` | Optional override (e.g. `gpt-4o` usually `0`) |
 | `ANTHROPIC_API_KEY` | `eval_llm_judge.py` with `--provider anthropic` |
 | `ANTHROPIC_JUDGE_MODEL` | Judge model id when using Anthropic |
-| `NOMOS_AUDIT_BACKEND` | `hf` (default): local GPU model. `openai`: Chat Completions via `OPENAI_API_KEY` (no GPU on API host). |
+| `NOMOS_AUDIT_BACKEND` | Default **`openai`** (no GPU needed if `OPENAI_API_KEY` is set). Set **`hf`** for local GPU + Transformers. The dashboard can override per request with **`X-Nomos-Audit-Backend`**: `openai` or `hf` unless **`NOMOS_DISABLE_CLIENT_BACKEND_CHOICE=1`**. |
+| `NOMOS_DISABLE_CLIENT_BACKEND_CHOICE` | If `1` / `true`, ignore `X-Nomos-Audit-Backend` (use only `NOMOS_AUDIT_BACKEND`). Use before exposing the API publicly. |
+| `NOMOS_DEBUG_AUDIT` | If `1` / `true`: log resolution to logger **`nomos.audit`**, and enable **`GET /v1/audit/debug`** (open in browser or HTTP client; JSON snapshot). **Disable** on public deployments. |
 | `NOMOS_OPENAI_MODEL` | OpenAI model id when `NOMOS_AUDIT_BACKEND=openai` (default: `gpt-4o-mini`) |
 | `NOMOS_ADAPTER_DIR` | Absolute path to LoRA adapter dir (default: `<repo>/outputs/nomos-lora`) |
 | `NOMOS_USE_LORA` | Default **`0`**: **base model only** (no adapter; typical PoC). Set **`1`** after training to merge the LoRA adapter from `NOMOS_ADAPTER_DIR`. |
@@ -47,7 +49,7 @@ pip install -r requirements.txt
 | `NOMOS_MAX_NEW_TOKENS` | Default generation cap for `/v1/audit` |
 | `NOMOS_CORS_ORIGINS` | Comma-separated origins for the dashboard (default includes `localhost:3000`) |
 
-Copy secrets into a **local** `.env` if you use `python-dotenv` in the judge script, or `export` them in the shell (e.g. on a remote GPU pod). **Do not commit `.env`.**
+Put secrets in the repo-root **`.env`** (same folder as `README.md`). The **FastAPI app loads that file on startup** via `python-dotenv`. You can also `export` vars in the shell. **Do not commit `.env`.**
 
 ## Training
 
@@ -101,7 +103,7 @@ Some large synthetic artifacts are listed in `.gitignore`; the committed **`trai
 
 ## Live audit API + dashboard
 
-The **model runs on the API host** (needs **CUDA** + adapter weights). The **browser only calls HTTP**.
+For **`hf`** mode, the **model runs on the API host** (needs **CUDA**). For **`openai`** mode, the API host calls OpenAI (needs **`OPENAI_API_KEY`**). The **browser only calls HTTP**.
 
 **1. API (from repo root, same venv as training):**
 
@@ -129,8 +131,9 @@ Open the app, use **Live audit (LoRA)** — paste Python, **Run audit**. Respons
 | Method | Path | Purpose |
 |--------|------|---------|
 | `GET` | `/health` | Liveness |
-| `GET` | `/v1/audit/status` | Adapter path, load errors, whether weights are in memory |
-| `POST` | `/v1/audit` | Model audit: `{"code": "..."}` **or** `{"files": {"src/app.py": "..."}}` (mutually exclusive). Response adds optional `ast_summary` when AST context was prepended to the prompt. |
+| `GET` | `/v1/audit/status` | Readiness for a backend. Pass **`?audit_backend=openai`** or **`hf`** (recommended for the dashboard; avoids CORS issues with custom headers). Also accepts **`X-Nomos-Audit-Backend`**. |
+| `GET` | `/v1/audit/debug` | Only if **`NOMOS_DEBUG_AUDIT=1`**: JSON trace (`?audit_backend=…` supported). Otherwise **404**. |
+| `POST` | `/v1/audit` | Model audit: `{"code": "..."}` **or** `{"files": {...}}` (mutually exclusive). Optional **`audit_backend`**: `openai` or `hf` in the JSON body (or query/header). Response adds optional `ast_summary` when AST context was prepended to the prompt. |
 | `POST` | `/v1/codebase/ast` | No model: `{"files": { "path": "source" }}` → parse trees summarized per file, merged routes/imports (FastAPI-style decorators are detected heuristically). |
 
 **AST behavior:** For `POST /v1/audit`, if you send **`files`**, an `ast` summary is **prepended to the user message by default** (set `include_ast_summary: false` to disable). For a single **`code`** string only, AST is **off** by default unless you set `include_ast_summary: true`. Limits: 64 files, 250k characters total, paths normalized with `/`, `..` rejected.

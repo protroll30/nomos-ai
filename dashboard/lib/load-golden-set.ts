@@ -37,6 +37,39 @@ function isGoldenSetRecord(x: unknown): x is GoldenSetRecord {
   return true;
 }
 
+function stateFromViolationSubtlety(raw: unknown): GoldenSetRecord["state"] | null {
+  const s = typeof raw === "string" ? raw.trim().toLowerCase() : "";
+  if (s === "overt") return "verified";
+  if (s === "omission") return "caution";
+  if (s === "borderline") return "emergent";
+  return null;
+}
+
+function coerceGoldenSetRecord(x: unknown): GoldenSetRecord | null {
+  if (isGoldenSetRecord(x)) return x;
+  if (x === null || typeof x !== "object") return null;
+  const o = x as Record<string, unknown>;
+  const baseKeys = ["id", "citation", "instrument", "section_ref", "text"] as const;
+  for (const k of baseKeys) {
+    if (typeof o[k] !== "string" || !String(o[k]).trim()) return null;
+  }
+  if (typeof o.compliance_justification !== "string") return null;
+  if (typeof o.uncertainty_factor !== "number" || Number.isNaN(o.uncertainty_factor)) return null;
+  const state = stateFromViolationSubtlety(o.violation_subtlety);
+  if (!state) return null;
+  return {
+    id: String(o.id),
+    citation: String(o.citation),
+    instrument: String(o.instrument),
+    section_ref: String(o.section_ref),
+    text: String(o.text),
+    repo_path: `synthetic/${String(o.id)}`,
+    expected_probability: o.uncertainty_factor,
+    state,
+    reasoning: String(o.compliance_justification),
+  };
+}
+
 function buildCotLines(
   sourcePath: string,
   byteLength: number,
@@ -90,7 +123,7 @@ export async function loadGoldenSetBundle(): Promise<GoldenSetBundle> {
   if (!Array.isArray(parsed)) {
     throw new Error(`golden_set.json must be an array at ${sourcePath}`);
   }
-  const records = parsed.filter(isGoldenSetRecord);
+  const records = parsed.map(coerceGoldenSetRecord).filter((r): r is GoldenSetRecord => r !== null);
   if (records.length !== parsed.length) {
     throw new Error(
       `golden_set.json: ${parsed.length - records.length} record(s) failed schema at ${sourcePath}`

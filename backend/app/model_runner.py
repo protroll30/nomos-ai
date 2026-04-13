@@ -9,6 +9,14 @@ from app.code_intel import AST_PROMPT_LEAD
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
+
+def _env_trim(key: str) -> str:
+    v = os.environ.get(key)
+    if v is None:
+        return ""
+    return str(v).strip().strip('"').strip("'")
+
+
 SYSTEM_TEXT = (
     "You are Nomos, an expert AI compliance auditor enforcing the EU AI Act "
     "(Regulation 2024/1689). Your task is to review FastAPI architectures and output a "
@@ -40,11 +48,29 @@ def _use_lora() -> bool:
     return v not in ("0", "false", "no", "off")
 
 
-def _audit_backend() -> str:
-    v = os.environ.get("NOMOS_AUDIT_BACKEND", "hf").strip().lower()
+def _audit_backend_env() -> str:
+    raw = _env_trim("NOMOS_AUDIT_BACKEND")
+    if not raw:
+        return "openai"
+    v = raw.lower()
     if v in ("openai", "oai"):
         return "openai"
     return "hf"
+
+
+def _client_backend_choice_enabled() -> bool:
+    v = os.environ.get("NOMOS_DISABLE_CLIENT_BACKEND_CHOICE", "").strip().lower()
+    return v not in ("1", "true", "yes")
+
+
+def effective_audit_backend(client_header: str | None) -> str:
+    if _client_backend_choice_enabled() and client_header and client_header.strip():
+        h = client_header.strip().lower()
+        if h in ("openai", "oai"):
+            return "openai"
+        if h in ("hf", "local", "huggingface"):
+            return "hf"
+    return _audit_backend_env()
 
 
 def _openai_model() -> str:
@@ -80,7 +106,7 @@ def _generate_openai(
 ) -> tuple[str, dict | None, str | None]:
     from openai import OpenAI
 
-    api_key = os.environ.get("OPENAI_API_KEY", "").strip()
+    api_key = _env_trim("OPENAI_API_KEY")
     if not api_key:
         raise RuntimeError("OPENAI_API_KEY is not set.")
 
@@ -147,10 +173,10 @@ def _load() -> None:
         _tokenizer = None
 
 
-def ensure_loaded() -> str | None:
+def ensure_loaded(client_backend: str | None = None) -> str | None:
     global _load_error
-    if _audit_backend() == "openai":
-        return None if os.environ.get("OPENAI_API_KEY", "").strip() else "OPENAI_API_KEY is not set."
+    if effective_audit_backend(client_backend) == "openai":
+        return None if _env_trim("OPENAI_API_KEY") else "OPENAI_API_KEY is not set."
     with _lock:
         if _model is not None and _tokenizer is not None:
             return None
@@ -160,9 +186,9 @@ def ensure_loaded() -> str | None:
         return _load_error
 
 
-def inference_ready() -> bool:
-    if _audit_backend() == "openai":
-        return bool(os.environ.get("OPENAI_API_KEY", "").strip())
+def inference_ready(client_backend: str | None = None) -> bool:
+    if effective_audit_backend(client_backend) == "openai":
+        return bool(_env_trim("OPENAI_API_KEY"))
     return _model is not None and _tokenizer is not None
 
 
@@ -170,11 +196,12 @@ def last_load_error() -> str | None:
     return _load_error
 
 
-def status_snapshot() -> dict:
-    if _audit_backend() == "openai":
-        key_ok = bool(os.environ.get("OPENAI_API_KEY", "").strip())
+def status_snapshot(client_backend: str | None = None) -> dict:
+    if effective_audit_backend(client_backend) == "openai":
+        key_ok = bool(_env_trim("OPENAI_API_KEY"))
         return {
             "backend": "openai",
+            "client_backend_choice_enabled": _client_backend_choice_enabled(),
             "adapter_dir": str(_adapter_dir()),
             "model_name": _openai_model(),
             "use_lora": False,
@@ -183,11 +210,37 @@ def status_snapshot() -> dict:
         }
     return {
         "backend": "hf",
+        "client_backend_choice_enabled": _client_backend_choice_enabled(),
         "adapter_dir": str(_adapter_dir()),
         "model_name": _model_name(),
         "use_lora": _use_lora(),
-        "inference_ready": inference_ready(),
+        "inference_ready": inference_ready(client_backend),
         "load_error": last_load_error(),
+    }
+
+
+def debug_audit_bundle(client_override: str | None) -> dict:
+    eff = effective_audit_backend(client_override)
+    cuda: bool | None = None
+    torch_err: str | None = None
+    try:
+        import torch
+
+        cuda = bool(torch.cuda.is_available())
+    except Exception as e:
+        torch_err = str(e)
+    return {
+        "effective_backend": eff,
+        "env_NOMOS_AUDIT_BACKEND": _env_trim("NOMOS_AUDIT_BACKEND") or "(unset)",
+        "backend_from_env_only": _audit_backend_env(),
+        "client_choice_enabled": _client_backend_choice_enabled(),
+        "openai_key_configured": bool(_env_trim("OPENAI_API_KEY")),
+        "openai_model": _openai_model(),
+        "hf_model_id": _model_name(),
+        "hf_weights_in_memory": _model is not None,
+        "hf_last_load_error": last_load_error(),
+        "torch_import_error": torch_err,
+        "torch_cuda_available": cuda,
     }
 
 
@@ -211,14 +264,15 @@ def generate_audit(
     *,
     max_new_tokens: int = 1024,
     ast_summary: str | None = None,
+    client_backend: str | None = None,
 ) -> tuple[str, dict | None, str | None]:
-    if _audit_backend() == "openai":
-        err = ensure_loaded()
+    if effective_audit_backend(client_backend) == "openai":
+        err = ensure_loaded(client_backend)
         if err:
             raise RuntimeError(err)
         return _generate_openai(code, max_new_tokens=max_new_tokens, ast_summary=ast_summary)
 
-    err = ensure_loaded()
+    err = ensure_loaded(client_backend)
     if err:
         raise RuntimeError(err)
     assert _model is not None and _tokenizer is not None

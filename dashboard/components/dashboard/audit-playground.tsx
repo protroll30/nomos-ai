@@ -9,6 +9,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { cn } from "@/lib/utils";
 
 const DEFAULT_SAMPLE = `@app.post("/predict")
 async def predict(features: list[float]):
@@ -25,6 +26,7 @@ type AuditApiResponse = {
 
 type StatusResponse = {
   backend?: string;
+  client_backend_choice_enabled?: boolean;
   adapter_dir: string;
   model_name: string;
   use_lora: boolean;
@@ -32,8 +34,17 @@ type StatusResponse = {
   load_error: string | null;
 };
 
+type AuditBackendMode = "openai" | "hf";
+
 function apiBase(): string {
   return (process.env.NEXT_PUBLIC_NOMOS_API_URL ?? "").replace(/\/$/, "");
+}
+
+function defaultAuditBackend(): AuditBackendMode {
+  const v = (process.env.NEXT_PUBLIC_DEFAULT_AUDIT_BACKEND ?? "").trim().toLowerCase();
+  if (v === "hf" || v === "local") return "hf";
+  if (v === "openai" || v === "oai") return "openai";
+  return "openai";
 }
 
 async function fileListToFilesMap(files: FileList): Promise<Record<string, string>> {
@@ -68,6 +79,7 @@ export function AuditPlayground() {
   const snippetInputRef = useRef<HTMLInputElement>(null);
   const folderInputRef = useRef<HTMLInputElement>(null);
   const [sourceMode, setSourceMode] = useState<"snippet" | "files">("snippet");
+  const [auditBackend, setAuditBackend] = useState<AuditBackendMode>(defaultAuditBackend);
   const [code, setCode] = useState(DEFAULT_SAMPLE);
   const [filesMap, setFilesMap] = useState<Record<string, string> | null>(null);
   const [loading, setLoading] = useState(false);
@@ -75,10 +87,13 @@ export function AuditPlayground() {
   const [result, setResult] = useState<AuditApiResponse | null>(null);
   const [status, setStatus] = useState<StatusResponse | null>(null);
 
-  const refreshStatus = useCallback(async () => {
+  const fetchStatusFor = useCallback(async (mode: AuditBackendMode) => {
     if (!base) return;
     try {
-      const r = await fetch(`${base}/v1/audit/status`);
+      const q = new URLSearchParams({ audit_backend: mode });
+      const r = await fetch(`${base}/v1/audit/status?${q}`, {
+        cache: "no-store",
+      });
       if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
       setStatus((await r.json()) as StatusResponse);
     } catch {
@@ -87,8 +102,8 @@ export function AuditPlayground() {
   }, [base]);
 
   useEffect(() => {
-    void refreshStatus();
-  }, [refreshStatus]);
+    void fetchStatusFor(auditBackend);
+  }, [auditBackend, base, fetchStatusFor]);
 
   async function onPickFiles(e: React.ChangeEvent<HTMLInputElement>) {
     const fl = e.target.files;
@@ -113,12 +128,14 @@ export function AuditPlayground() {
     setResult(null);
     const body =
       sourceMode === "files" && filesMap
-        ? JSON.stringify({ files: filesMap })
-        : JSON.stringify({ code });
+        ? JSON.stringify({ files: filesMap, audit_backend: auditBackend })
+        : JSON.stringify({ code, audit_backend: auditBackend });
     try {
       const r = await fetch(`${base}/v1/audit`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+        },
         body,
       });
       const data = (await r.json().catch(() => ({}))) as
@@ -136,7 +153,7 @@ export function AuditPlayground() {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setLoading(false);
-      void refreshStatus();
+      void fetchStatusFor(auditBackend);
     }
   }
 
@@ -148,13 +165,60 @@ export function AuditPlayground() {
   return (
     <Card className="flex flex-col gap-0 rounded-panel border-hairline border-border bg-surface py-2 shadow-none ring-0">
       <CardHeader className="border-b border-border px-3 py-2 [.border-b]:pb-2">
-        <CardTitle className="font-mono text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">
-          Live audit
-        </CardTitle>
-        <p className="mt-1 font-mono text-[11px] leading-relaxed text-muted-foreground">
-          Calls your Nomos API (<span className="text-foreground">/v1/audit</span>). PoC only — not
-          legal advice.
-        </p>
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div className="min-w-0 flex-1">
+            <CardTitle className="font-mono text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">
+              Live audit
+            </CardTitle>
+            <p className="mt-1 font-mono text-[11px] leading-relaxed text-muted-foreground">
+              Calls your Nomos API (<span className="text-foreground">/v1/audit</span>). PoC only —
+              not legal advice.
+            </p>
+          </div>
+          {base ? (
+            status?.client_backend_choice_enabled === false ? (
+              <div className="shrink-0 rounded-full border border-border bg-muted/30 px-3 py-1.5 font-mono text-[10px] text-muted-foreground">
+                Backend:{" "}
+                <span className="font-semibold text-foreground">
+                  {status.backend ?? "server default"}
+                </span>
+              </div>
+            ) : (
+              <div
+                className="flex shrink-0 rounded-full border border-border bg-muted/40 p-0.5 shadow-[inset_0_1px_2px_rgba(0,0,0,0.06)] dark:shadow-[inset_0_1px_2px_rgba(0,0,0,0.2)]"
+                role="group"
+                aria-label="Inference backend"
+              >
+                <button
+                  type="button"
+                  onClick={() => setAuditBackend("openai")}
+                  className={cn(
+                    "rounded-full px-3 py-1.5 font-mono text-[10px] font-semibold uppercase tracking-wide transition-colors",
+                    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
+                    auditBackend === "openai"
+                      ? "bg-primary text-primary-foreground shadow-sm"
+                      : "text-muted-foreground hover:text-foreground"
+                  )}
+                >
+                  OpenAI
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setAuditBackend("hf")}
+                  className={cn(
+                    "rounded-full px-3 py-1.5 font-mono text-[10px] font-semibold uppercase tracking-wide transition-colors",
+                    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
+                    auditBackend === "hf"
+                      ? "bg-primary text-primary-foreground shadow-sm"
+                      : "text-muted-foreground hover:text-foreground"
+                  )}
+                >
+                  Local GPU
+                </button>
+              </div>
+            )
+          ) : null}
+        </div>
       </CardHeader>
       <CardContent className="flex flex-col gap-3 px-3 py-3">
         {!base ? (
@@ -191,6 +255,16 @@ export function AuditPlayground() {
                 {status.load_error ? (
                   <span className="block pt-1 text-amber-600 dark:text-amber-400">
                     {status.load_error}
+                    {status.backend === "hf" &&
+                    /cuda/i.test(status.load_error) ? (
+                      <span className="mt-1 block text-muted-foreground">
+                        <span className="text-foreground">Local GPU</span> needs CUDA. Pick{" "}
+                        <span className="text-foreground">OpenAI</span> above, put{" "}
+                        <span className="text-foreground">OPENAI_API_KEY</span> in the repo-root{" "}
+                        <span className="text-foreground">.env</span> (loaded when uvicorn starts), then
+                        restart the API.
+                      </span>
+                    ) : null}
                   </span>
                 ) : null}
               </>
@@ -309,7 +383,7 @@ export function AuditPlayground() {
             variant="outline"
             size="sm"
             disabled={!base}
-            onClick={() => void refreshStatus()}
+            onClick={() => void fetchStatusFor(auditBackend)}
           >
             Refresh status
           </Button>
